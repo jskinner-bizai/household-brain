@@ -55,31 +55,36 @@ npm test        # builds with tsc, then runs the code/HTTP regression suites
 npm start
 ```
 
-Open **http://127.0.0.1:8099/** in a browser and choose **Connect to demo**.
+Open **http://127.0.0.1:8099/** in a browser and choose **Open sample household**.
 The page initializes the MCP connection, sends the initialized notification,
 discovers all nine tools and reads the household state. It uses the real
-server responses, with optional structured-result details. No LLM interprets
+server responses, with optional technical receipts. No LLM interprets
 the form controls.
 
-1. Keep **Meals to cover** at 2 and choose **Preview restock**. A fresh server
+1. Read the selected dinner plans and low pantry items. Keep the meal selector
+   at 2 and choose **Check what to add**. A fresh server
    proposes six additions; blueberries are already listed. This explicit
    `dry_run: true` request changes nothing.
-2. Review items, units and reasons, then choose **Add to demo list**. This
+2. Review the meal ingredients, low staples, units and reasons, then choose
+   **Add 6 items to sample list**. One unit per missing item is proposed;
+   recipe-serving quantities are not calculated. This
    separate `dry_run: false` call sends the preview's `expected_token`.
    The store atomically validates the decision state and adds the batch.
    If another client changed the pantry, plan or list, the write is rejected
    with a fresh preview; review and confirm again. A fresh fixture produces
    six additions, seven grocery lines and a brief that reflects the list.
-3. Preview and add again. The repeated restock adds zero new lines.
-4. Mark **take out recycling** done. It leaves the open chores and the next
+3. Read the updated sample list, then check again. The repeated check shows
+   nothing new to add and disables confirmation; it makes no additional write.
+4. Expand the other household tools and mark **take out recycling** done.
+   It leaves the open chores and the next
    household brief. Pantry, meal-plan and brief controls expose the remaining
    journeys; server details show health, preferences and discovered definitions.
 
 Manual grocery additions **increase** the existing quantity for the same
 normalized item name and unit. There is no undo/remove tool. In-flight
 controls prevent double clicks, and the client never retries a write
-automatically. If a write response is lost or uncertain, use **Refresh
-household state**, inspect the actual list and decide whether to retry.
+automatically. If a write response is lost or uncertain, use **Reload household**,
+inspect the actual list and decide whether to retry.
 The read-only refresh does not repeat the write.
 
 All clients share state within one running server. Restart the server for

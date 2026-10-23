@@ -1,5 +1,5 @@
 const byId = (id) => document.getElementById(id);
-const state = { connected: false, busy: false, endpoint: '/mcp', protocol: '2025-11-25', requestId: 0, preview: null, tools: [], server: null };
+const state = { connected: false, busy: false, endpoint: '/mcp', protocol: '2025-11-25', requestId: 0, preview: null, tools: [], server: null, mealPlan: [] };
 
 class RequestFailure extends Error {
   constructor(message, uncertain = false) { super(message); this.uncertain = uncertain; }
@@ -19,11 +19,33 @@ function focusTarget(id) {
   if (!target || !target.isConnected || target.disabled) return;
   target.focus();
 }
+function setStage(stage) {
+  document.body.dataset.stage = stage;
+  byId('preview-restock').textContent = stage === 'done' ? 'Check again' : 'Check what to add';
+  const primary = stage === 'start' ? 'connect' : stage === 'review' ? 'commit-restock' : 'preview-restock';
+  for (const id of ['connect', 'preview-restock', 'commit-restock']) byId(id).classList.toggle('primary', id === primary);
+  const help = byId('journey-help');
+  if (help) help.textContent = {
+    start: 'Open the sample household to see the dinner plan and what is already on the list.',
+    check: 'Start with the meals below. Check what needs adding before changing the list.',
+    review: 'Review each addition and its reason. The list changes only when you confirm.',
+    done: 'Your sample list is below. Check again any time; items already listed will not be added twice.',
+  }[stage];
+  for (const [number, current] of [[1, stage === 'start'], [2, stage === 'check' || stage === 'review'], [3, stage === 'done']]) {
+    const step = byId(`journey-step-${number}`);
+    if (step) step.classList.toggle('is-current', current);
+    const link = document.querySelector(`.journey-nav a[href="#journey-step-${number}"]`);
+    if (link) {
+      if (current) link.setAttribute('aria-current', 'step');
+      else link.removeAttribute('aria-current');
+    }
+  }
+}
 function setBusy(busy) {
   state.busy = busy;
   byId('connect').disabled = busy || state.connected;
   document.querySelectorAll('[data-action]').forEach((button) => { button.disabled = busy || !state.connected; });
-  byId('commit-restock').disabled = busy || !state.connected || !state.preview || state.preview.days !== Number(byId('days').value);
+  byId('commit-restock').disabled = busy || !state.connected || !state.preview || state.preview.count === 0 || state.preview.days !== Number(byId('days').value);
   byId('days').disabled = busy;
   document.querySelectorAll('button[data-chore]').forEach((button) => { button.disabled = busy || !state.connected; });
   byId('main').setAttribute('aria-busy', String(busy));
@@ -55,13 +77,14 @@ function displayText(result) { return resultText(result).replace(/^Synthetic dem
 function showResult(id, result, title, summary) {
   const target = byId(id);
   target.replaceChildren();
+  target.classList.remove('success-summary');
   target.classList.toggle('error', Boolean(result.isError));
   if (title) target.append(element('p', title, 'result-title'));
   const text = summary ?? displayText(result);
   if (text) target.append(element('p', text, 'response-text'));
   if (result.content || result.structuredContent) {
     const details = element('details');
-    details.append(element('summary', 'Server response'), element('pre', JSON.stringify(result, null, 2)));
+    details.append(element('summary', 'Technical receipt'), element('pre', JSON.stringify(result, null, 2)));
     target.append(details);
   }
 }
@@ -75,13 +98,16 @@ function requireSuccess(result) {
 }
 function showFailure(id, error) {
   const target = byId(id);
+  target.classList.remove('success-summary');
   target.classList.add('error');
   const message = error.uncertain
-    ? `${error.message} The write outcome is uncertain. It may have changed the demo state. Refresh household state and inspect the list before deciding whether to retry. This page will not retry automatically.`
+    ? `${error.message} This change may have gone through. Reload the household and check the list before trying again. Nothing will be retried automatically.`
     : error.message;
   if (error.toolResult) showResult(id, error.toolResult, 'Tool error response');
   else target.replaceChildren(element('p', message));
-  status(error.uncertain ? 'Write outcome uncertain. Refresh household state and inspect the list before retrying.' : error.message, true);
+  if (error.uncertain) state.preview = null;
+  if (state.connected && !state.preview) setStage('check');
+  status(error.uncertain ? 'We could not confirm that change. Reload the household, then check the list. Do not add it again yet.' : error.message, true);
 }
 async function action(id, task, doneMessage, { focus = id } = {}) {
   if (state.busy) return;
@@ -92,7 +118,7 @@ async function action(id, task, doneMessage, { focus = id } = {}) {
   };
   document.addEventListener('focusin', trackFocus);
   setBusy(true);
-  status('Working with the local household...');
+  status('Checking the sample household…');
   try { const outcome = await task(); status(typeof outcome === 'string' ? outcome : doneMessage); }
   catch (error) { failed = true; showFailure(id, error); }
   finally {
@@ -110,11 +136,35 @@ function listItems(target, values, format) {
   values.forEach((value) => list.append(element('li', format(value))));
   target.append(list);
 }
+function renderMeals() {
+  const target = byId('dinner');
+  target.replaceChildren();
+  const meals = state.mealPlan.slice(0, Number(byId('days').value));
+  if (!meals.length) { target.append(element('p', 'No meals planned in this sample.')); return; }
+  const list = element('ul', undefined, 'meal-list');
+  for (const meal of meals) {
+    const row = element('li', undefined, 'meal-row');
+    row.append(element('span', meal.day, 'meal-day'), element('strong', meal.meal, 'meal-name'));
+    list.append(row);
+  }
+  target.append(list);
+}
 function renderSummary(summary) {
-  byId('dinner').replaceChildren(element('p', summary.tonight ? `${summary.tonight.meal} (${summary.tonight.day})` : 'Nothing planned.'));
+  renderMeals();
   listItems(byId('low-pantry'), summary.low ?? [], (name) => name);
   const groceries = summary.groceries;
-  if (Array.isArray(groceries)) listItems(byId('grocery-list'), groceries, (line) => `${line.quantity} ${line.unit} of ${line.name}`);
+  if (Array.isArray(groceries)) {
+    const target = byId('grocery-list'); target.replaceChildren();
+    const list = element('ul', undefined, 'grocery-items');
+    for (const line of groceries) {
+      const row = element('li', undefined, 'grocery-line');
+      row.append(element('span', line.name, 'grocery-name'), element('span', `${line.quantity} ${line.unit}`, 'grocery-quantity'));
+      list.append(row);
+    }
+    target.append(groceries.length ? list : element('p', 'Your sample list is empty. Check the meal plan to get started.'));
+    const count = byId('grocery-count');
+    if (count) count.textContent = `${groceries.length} item${groceries.length === 1 ? '' : 's'}`;
+  }
   else byId('grocery-list').replaceChildren(element('p', `${summary.groceryCount ?? 0} grocery lines. This server does not expose the full list in its read-only summary.`));
   const chores = byId('chores');
   chores.replaceChildren();
@@ -145,13 +195,20 @@ async function refreshBrief() {
 }
 async function refreshHousehold() {
   const result = await callTool('household_summary');
-  renderSummary(requireSuccess(result));
+  const summary = requireSuccess(result);
+  if (!state.mealPlan.length && summary.tonight) state.mealPlan = [summary.tonight];
+  // A confirmed list read remains useful even if the separate meal-plan read fails.
+  renderSummary(summary);
+  const plan = requireSuccess(await callTool('mealplan_get'));
+  if (!Array.isArray(plan.plan)) throw new RequestFailure('The meal plan could not be read. Reload the household before checking additions.');
+  state.mealPlan = plan.plan;
+  renderMeals();
   await refreshBrief();
 }
 async function refreshAfterWrite(resultId) {
   try { await refreshHousehold(); return true; }
   catch (error) {
-    byId(resultId).append(element('p', `The write response above was received, but the read-only refresh failed: ${error.message} Use Refresh household state. The write will not be retried.`));
+    byId(resultId).append(element('p', `The change was confirmed, but the updated household could not be loaded: ${error.message} Reload the household to see the latest list. The change will not be sent again automatically.`));
     return false;
   }
 }
@@ -161,22 +218,38 @@ function renderPreview(result, days, changed = false) {
   if (typeof content.previewToken !== 'string' || !content.previewToken) throw new RequestFailure('The server did not supply a validated preview. Adding remains disabled.');
   const target = byId('preview'); target.replaceChildren();
   if (changed) target.append(element('p', 'The household changed since your preview. Nothing was added. Review this updated list, then confirm it.', 'changed-notice'));
-  target.append(element('h3', `Preview for ${days} planned meal${days === 1 ? '' : 's'}: ${(content.added ?? []).length} proposed additions`));
-  if (!(content.added ?? []).length) target.append(element('p', 'No additions proposed. The ingredient checklist is already covered by stock or the list.'));
-  const list = element('ul');
-  for (const item of content.added ?? []) {
-    const line = element('li', `1 ${item.unit} of ${item.name}`);
-    line.append(element('span', item.reason, 'item-meta')); list.append(line);
+  const additions = content.added ?? [];
+  target.append(element('h3', additions.length ? `${additions.length} things to add to your list` : 'Nothing new to add'));
+  if (!additions.length) target.append(element('p', 'The checked ingredients are on hand or already listed. This check does not calculate quantities for servings.'));
+  const groups = new Map();
+  for (const item of additions) {
+    const title = item.reason.startsWith('for ')
+      ? `For ${item.reason.slice(4)}` : 'Running low at home';
+    if (!groups.has(title)) groups.set(title, []);
+    groups.get(title).push(item);
   }
-  if (list.childElementCount) target.append(list);
+  for (const [title, items] of groups) {
+    target.append(element('p', title, 'preview-section-title'));
+    const list = element('ul', undefined, 'preview-items');
+    for (const item of items) {
+      const line = element('li', undefined, 'preview-item');
+      line.append(element('strong', item.name, 'preview-item-name'), element('span', `1 ${item.unit}`, 'preview-item-meta'));
+      list.append(line);
+    }
+    target.append(list);
+  }
   target.append(element('p', `Already listed: ${(content.alreadyListed ?? []).map((item) => `${item.name} (${item.unit})`).join(', ') || 'none'}.`));
   for (const conflict of content.unitConflicts ?? []) {
     const listed = (conflict.listed ?? []).map((line) => `${line.quantity} ${line.unit}`).join(', ');
     target.append(element('p', `${conflict.name} is already listed as ${listed}; this checklist adds 1 ${conflict.requestedUnit}. Units are not converted.`, 'unit-notice'));
   }
-  target.append(element('p', 'Preview only. The grocery list has not changed.'));
-  byId('commit-restock').textContent = changed ? 'Confirm updated list' : 'Add to demo list';
-  state.preview = { days, token: content.previewToken };
+  target.append(element('p', additions.length ? 'Nothing has been added yet. Add these items only if the list looks right.' : 'No change is needed from this check.', 'preview-footnote'));
+  const details = element('details');
+  details.append(element('summary', 'Technical receipt'), element('pre', JSON.stringify(result, null, 2)));
+  target.append(details);
+  byId('commit-restock').textContent = changed ? `Confirm ${additions.length} updated item${additions.length === 1 ? '' : 's'}` : `Add ${additions.length} item${additions.length === 1 ? '' : 's'} to sample list`;
+  state.preview = { days, token: content.previewToken, count: additions.length };
+  setStage(additions.length ? 'review' : 'done');
 }
 function renderTopics(preferences) {
   const target = byId('brief-topics'); target.replaceChildren();
@@ -220,24 +293,30 @@ byId('connect').addEventListener('click', () => action('restock-result', async (
   byId('preference-details').textContent = JSON.stringify(preferences, null, 2);
   byId('protocol-details').textContent = JSON.stringify({ endpoint: state.endpoint, protocolVersion: state.protocol, serverInfo: state.server, transport: 'Stateless Streamable HTTP; real JSON-RPC calls' }, null, 2);
   renderTopics(preferences); renderTools(state.tools);
-  state.connected = true;
-  byId('connection-state').textContent = `Connected: ${health.service ?? state.server?.name ?? 'local MCP server'}`;
-  byId('connection-help').textContent = `${state.tools.length} tools discovered over protocol ${state.protocol}. Fictional fixtures only.`;
   await refreshHousehold();
-}, 'Connected. Preview what the next meals need.', { focus: 'preview-restock' }));
+  state.connected = true;
+  byId('connection-state').textContent = 'Sample household is open';
+  byId('connect').textContent = 'Household open';
+  byId('connection-help').textContent = 'The plan and list below come from the same local household.';
+  setStage('check');
+}, 'Here is the dinner plan. Check what needs adding when you are ready.', { focus: 'preview-restock' }));
 
 byId('days').addEventListener('change', () => {
   state.preview = null;
-  byId('commit-restock').textContent = 'Add to demo list';
-  byId('preview').replaceChildren(element('p', 'Meals to cover changed. Preview again before adding.'));
+  byId('commit-restock').textContent = 'Review items before adding';
+  byId('preview').replaceChildren(element('p', 'You changed the number of meals. Check the new plan before adding anything.'));
+  if (state.connected) { renderMeals(); setStage('check'); }
   setBusy(state.busy);
 });
 byId('preview-restock').addEventListener('click', () => action('restock-result', async () => {
   state.preview = null;
+  setStage('check');
   const days = Number(byId('days').value);
   const result = await callTool('restock_for_meals', { days, dry_run: true });
-  showResult('restock-result', result, undefined, 'Preview ready. Review the proposed items above.'); renderPreview(result, days);
-}, 'Preview ready. Review the list before adding.', { focus: 'preview' }));
+  byId('restock-result').replaceChildren();
+  byId('restock-result').classList.remove('error', 'success-summary');
+  renderPreview(result, days);
+}, 'Check complete. Review the items and their reasons before adding.', { focus: 'preview' }));
 byId('commit-restock').addEventListener('click', () => {
   if (!state.preview || state.preview.days !== Number(byId('days').value)) return;
   const { days, token } = state.preview; state.preview = null;
@@ -249,19 +328,30 @@ byId('commit-restock').addEventListener('click', () => {
       showResult('restock-result', result, 'No changes made', 'The list changed. Review the updated preview above and confirm again.');
       return 'The household changed. Nothing was added. Review and confirm the updated preview.';
     }
-    showResult('restock-result', result, 'Restock receipt'); requireSuccess(result);
-    byId('preview').replaceChildren(element('p', 'This preview has been used. Preview again for another restock.'));
+    requireSuccess(result);
+    const added = (content.added ?? []).length;
+    showResult('restock-result', result, `${added} item${added === 1 ? '' : 's'} added to the sample list`, 'See your updated shopping list below. Nothing was purchased and pantry stock has not changed.');
+    byId('restock-result').classList.add('success-summary');
+    byId('commit-restock').textContent = 'Added to sample list';
+    byId('preview').replaceChildren(element('p', 'These additions are saved to the running sample list. Check again to see whether anything else needs adding.'));
     const refreshed = await refreshAfterWrite('restock-result');
+    setStage(refreshed ? 'done' : 'check');
     return refreshed ? `${(content.added ?? []).length} items added. The list and brief are refreshed.` : `${(content.added ?? []).length} items added. The refresh failed; inspect the receipt and refresh household state.`;
   }, 'Restock response received.', { focus: () => state.preview ? 'preview' : 'restock-result' });
 });
-byId('refresh-state').addEventListener('click', () => action('restock-result', refreshHousehold, 'Household state refreshed. No write was requested.', { focus: 'status' }));
+byId('refresh-state').addEventListener('click', () => action('restock-result', async () => {
+  await refreshHousehold();
+  state.preview = null;
+  byId('preview').replaceChildren(element('p', 'The household is reloaded. Check what needs adding before changing the list.'));
+  setStage('check');
+}, 'Household reloaded. No change was requested.', { focus: 'status' }));
 byId('grocery-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const name = byId('grocery-name').value.trim(), unit = byId('grocery-unit').value.trim(), quantity = Number(byId('grocery-quantity').value);
   if (!name || name.normalize('NFKC').length > 80 || !unit || unit.normalize('NFKC').length > 40 || /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/u.test(name + unit) || !Number.isFinite(quantity) || quantity < 0.001 || quantity > 10000) { status('Use an item of up to 80 characters, a unit of up to 40, and a quantity from 0.001 to 10,000. Invisible control characters are not accepted.', true); return; }
   if (state.busy) return;
   state.preview = null;
+  setStage('check');
   byId('preview').replaceChildren(element('p', 'A grocery write was requested. Read the current state and preview restock again before adding.'));
   action('grocery-result', async () => {
     const result = await callTool('groceries_add', { name, quantity, unit }, true);
@@ -283,3 +373,4 @@ byId('brief-form').addEventListener('submit', (event) => {
   event.preventDefault();
   action('brief-result', refreshBrief, 'Brief response received. These choices are for this request only.');
 });
+setStage('start');
