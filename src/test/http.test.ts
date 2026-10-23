@@ -41,10 +41,12 @@ test("tools/list exposes all nine tools", async () => {
 });
 
 test("household state persists across stateless requests", async () => {
-  const first = await callTool("restock_for_meals", { days: 1 });
+  const preview = await callTool("restock_for_meals", { days: 1, dry_run: true });
+  const first = await callTool("restock_for_meals", { days: 1, expected_token: preview.body.result.structuredContent.previewToken });
   assert.match(first.body.result.content[0].text, /Added 4 items/);
   assert.equal(first.body.result.structuredContent.added.length, 4);
-  const second = await callTool("restock_for_meals", { days: 1 }, 2);
+  const nextPreview = await callTool("restock_for_meals", { days: 1, dry_run: true });
+  const second = await callTool("restock_for_meals", { days: 1, expected_token: nextPreview.body.result.structuredContent.previewToken }, 2);
   assert.match(second.body.result.content[0].text, /checklist is covered/i);
   assert.equal(second.body.result.structuredContent.added.length, 0);
   const summary = await callTool("household_summary", {}, 3);
@@ -61,11 +63,13 @@ test("40 concurrent calls each get their own answer", async () => {
   }
 });
 
-test("browser requests from a foreign Origin are refused, localhost is allowed", async () => {
+test("browser requests require the exact same origin rather than any localhost port", async () => {
   const evil = await rpc("tools/list", {}, 1, { origin: "https://evil.example" });
   assert.equal(evil.status, 403);
-  const local = await rpc("tools/list", {}, 1, { origin: `http://localhost:5173` });
-  assert.equal(local.status, 200);
+  const otherLocal = await rpc("tools/list", {}, 1, { origin: "http://localhost:5173" });
+  assert.equal(otherLocal.status, 403);
+  const sameOrigin = await rpc("tools/list", {}, 1, { origin: BASE });
+  assert.equal(sameOrigin.status, 200);
 });
 
 test("/healthz answers for load balancers", async () => {

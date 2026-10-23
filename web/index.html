@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Household Brain | Local MCP demo</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to household</a>
+  <header class="page-header wrap">
+    <div><p class="eyebrow">HOUSEHOLD BRAIN</p><h1>A little less to remember.</h1><p class="intro">From dinner plans to a list you can trust.</p></div>
+    <span class="local-tag">Local MCP prototype</span>
+  </header>
+  <main id="main" class="wrap" tabindex="-1">
+    <aside class="notice" aria-label="Demo scope">
+      <p><strong>Fictional household data.</strong> Local demo only. Changes reset when the server restarts.</p>
+      <details class="scope-details"><summary>What this prototype does</summary><p>No purchases, devices, Alexa, speech recognition, LLM or AWS service is connected. The server has no authentication or persistence. Changes are shared within this running server; refreshing the page does not reset them. Browser requests use exact Host/Origin checks. Preview tokens protect against changed state; they are not authentication.</p></details>
+    </aside>
+    <section class="connection" aria-label="Connection">
+      <div><strong id="connection-state">Not connected</strong><p id="connection-help">Connect to read the fictional household.</p></div>
+      <div class="button-row"><button id="connect" type="button">Connect to demo</button><button id="refresh-state" type="button" data-action disabled>Refresh household state</button></div>
+    </section>
+    <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true" tabindex="-1">Ready to connect.</p>
+    <section class="card restock" aria-labelledby="restock-heading">
+      <div class="section-heading"><div><p class="eyebrow">DINNER TO DEMO LIST</p><h2 id="restock-heading">What do the next meals need?</h2></div><span class="step-tag">Preview, then add</span></div>
+      <p>Check planned ingredients and low staples against the pantry and list. Review the proposed additions before making a change.</p>
+      <div class="controls"><div class="field"><label for="days">Meals to cover</label><select id="days"><option value="1">1 planned meal</option><option value="2" selected>2 planned meals</option><option value="3">3 planned meals</option></select></div><button id="preview-restock" type="button" data-action disabled>Preview restock</button></div>
+      <div id="preview" class="preview" role="region" aria-label="Restock preview" tabindex="-1"><p>No preview yet. Previewing does not change the list.</p></div>
+      <button id="commit-restock" class="primary" type="button" disabled>Add to demo list</button>
+      <details class="restock-rules"><summary>How additions are checked</summary><p>The server adds one unit per missing item, not recipe-serving quantities. A name in another unit stays separate and is shown before confirmation. Every add validates the preview and current household state together, atomically. If relevant state changed, nothing is added: review the updated preview and confirm again.</p></details>
+      <div id="restock-result" class="result" role="region" aria-label="Restock result" tabindex="-1"></div>
+    </section>
+    <details class="context-details card"><summary>Dinner and pantry context</summary><div class="context-grid">
+      <section aria-labelledby="dinner-heading"><h2 id="dinner-heading">Dinner tonight</h2><div id="dinner"><p>Connect to read the meal plan.</p></div></section>
+      <section aria-labelledby="pantry-heading"><h2 id="pantry-heading">Running low</h2><div id="low-pantry"><p>Connect to check pantry stock.</p></div></section>
+    </div></details>
+    <div class="context-grid">
+      <section class="card" aria-labelledby="groceries-heading"><h2 id="groceries-heading">Demo grocery list</h2><p class="muted">This list does not replenish the pantry or place an order.</p><div id="grocery-list"><p>Connect to read the list.</p></div>
+        <details><summary>Add an item manually</summary><form id="grocery-form"><div class="field"><label for="grocery-name">Grocery item</label><input id="grocery-name" name="name" required maxlength="80" placeholder="For example, flour" autocomplete="off"></div><div class="form-row"><div class="field"><label for="grocery-quantity">Quantity</label><input id="grocery-quantity" name="quantity" type="number" min="0.001" max="10000" step="0.001" value="1" required></div><div class="field"><label for="grocery-unit">Unit</label><input id="grocery-unit" name="unit" value="each" required maxlength="40"></div></div><p class="consequence">This increases the quantity of an existing item with the same name and unit. There is no undo or remove action.</p><button type="submit" data-action disabled>Add grocery item</button></form><div id="grocery-result" class="result" role="region" aria-label="Grocery result" tabindex="-1"></div></details>
+      </section>
+      <section class="card" aria-labelledby="chores-heading"><h2 id="chores-heading">Open chores</h2><p class="muted">Mark a fictional chore done and see it leave the next brief.</p><div id="chores"><p>Connect to read chores.</p></div><div id="chore-result" class="result" role="region" aria-label="Chore result" tabindex="-1"></div></section>
+    </div>
+    <section class="card" aria-labelledby="brief-heading"><div class="section-heading"><div><p class="eyebrow">SAME HOUSEHOLD STATE</p><h2 id="brief-heading">The next brief.</h2></div><span class="step-tag">On demand</span></div><p>No scheduled delivery or saved preferences. Weather, calendar and home are fictional fixtures.</p><form id="brief-form"><div class="field narrow"><label for="brief-detail">Brief detail</label><select id="brief-detail"><option value="headline">Headline</option><option value="standard" selected>Standard</option></select></div><fieldset><legend>Brief topics</legend><div id="brief-topics" class="topic-row"><p>Connect to discover available topics.</p></div></fieldset><button type="submit" data-action disabled>Refresh brief</button></form><div id="brief-result" class="result" role="region" aria-label="Household brief" tabindex="-1"></div></section>
+    <div class="context-grid">
+      <section class="card" aria-labelledby="query-heading"><h2 id="query-heading">Check a pantry item</h2><form id="pantry-form"><div class="field"><label for="pantry-item">Pantry item</label><input id="pantry-item" name="item" placeholder="For example, eggs" maxlength="80" autocomplete="off"><small>Use an exact or unique partial name. Leave blank for low stock.</small></div><button type="submit" data-action disabled>Check pantry</button></form><div id="pantry-result" class="result" role="region" aria-label="Pantry result" tabindex="-1"></div></section>
+      <section class="card" aria-labelledby="mealplan-heading"><h2 id="mealplan-heading">Planned ingredient checklist</h2><p class="muted">This is the fixture meal plan. The preview checks it against stock and the grocery list.</p><button id="load-mealplan" type="button" data-action disabled>Show meal plan</button><div id="mealplan-result" class="result" role="region" aria-label="Meal plan result" tabindex="-1"></div></section>
+    </div>
+    <details class="card server-details"><summary>Server and tool details</summary><p>The page uses real same-origin JSON-RPC initialization, tool discovery and calls. Expand a server response to inspect its full text and structured content.</p><h3>Connection</h3><pre id="protocol-details">Not connected.</pre><h3>Health</h3><pre id="health-details">Not loaded.</pre><h3>Brief preferences</h3><pre id="preference-details">Not loaded.</pre><h3 id="tool-heading">Discovered tools</h3><div id="tool-details"></div></details>
+    <footer><p>Self-hosted MCP prototype for the Alexa+ track. Native Alexa and cloud integration remain future work. Write requests are never retried automatically.</p></footer>
+  </main>
+</body>
+</html>

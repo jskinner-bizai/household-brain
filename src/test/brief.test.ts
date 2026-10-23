@@ -60,17 +60,49 @@ test("brief reflects groceries and distinguishes listed ingredients from stock",
 });
 
 test("successful restock changes next brief without pretending pantry was replenished", async (t) => {
-  const client = await connect(t); const before = text(await call(client, "brief_get", { topics: ["household"] }));
-  await call(client, "restock_for_meals", { days: 1 });
+  const store = new MemoryStore(); const pantryBefore = await store.pantry();
+  const client = await connect(t, store); const before = text(await call(client, "brief_get", { topics: ["household"] }));
+  const preview = await call(client, "restock_for_meals", { days: 1, dry_run: true });
+  const expected_token = (preview.structuredContent as { previewToken: string }).previewToken;
+  assert.notEqual((await call(client, "restock_for_meals", { days: 1, dry_run: false, expected_token })).isError, true);
   const after = text(await call(client, "brief_get", { topics: ["household"] }));
   assert.notEqual(after, before); assert.doesNotMatch(after, /still need/);
   assert.match(after, /On the grocery list for dinner: salmon fillets and broccoli/);
-  assert.match(after, /Running low on oat milk, eggs, blueberries/);
+  assert.match(after, /Pantry running low, already on the grocery list: oat milk, eggs, blueberries/);
+  assert.doesNotMatch(after, /Pantry running low, not on the grocery list in the same unit:/);
+  assert.match(after, /Grocery additions do not replenish pantry stock/);
+  assert.deepEqual(await store.pantry(), pantryBefore);
 });
 
 test("brief does not confuse incompatible grocery units", async (t) => {
   const client = await connect(t); await call(client, "groceries_add", { name: "salmon fillets", unit: "pack" });
-  assert.match(text(await call(client, "brief_get", { topics: ["household"] })), /still need salmon fillets and broccoli/);
+  const out = text(await call(client, "brief_get", { topics: ["household"] }));
+  assert.match(out, /still need salmon fillets and broccoli/);
+  assert.match(out, /Unit check: "salmon fillets" is listed as 1 "pack"; restock uses 1 "each"\. Units are not converted/);
+  assert.doesNotMatch(out, /On the grocery list for dinner: salmon fillets/);
+});
+
+test("matching checklist unit covers dinner even when another unit is also listed", async (t) => {
+  const client = await connect(t);
+  await call(client, "groceries_add", { name: "salmon fillets", unit: "lb", quantity: 2 });
+  await call(client, "groceries_add", { name: "salmon fillets", unit: "each" });
+  const out = text(await call(client, "brief_get", { topics: ["household"] }));
+  assert.match(out, /still need broccoli/);
+  assert.match(out, /On the grocery list for dinner: salmon fillets/);
+  assert.doesNotMatch(out, /Unit check: "salmon fillets"|still need salmon fillets/);
+});
+
+test("low pantry brief distinguishes groceries already listed without changing stock", async (t) => {
+  const store = new MemoryStore(); const client = await connect(t, store);
+  const before = await store.pantry();
+  const initial = text(await call(client, "brief_get", { topics: ["household"] }));
+  assert.match(initial, /Pantry running low, not on the grocery list in the same unit: oat milk, eggs/);
+  assert.match(initial, /Pantry running low, already on the grocery list: blueberries/);
+  await call(client, "groceries_add", { name: "oat milk", unit: "carton" });
+  const updated = text(await call(client, "brief_get", { topics: ["household"] }));
+  assert.match(updated, /Pantry running low, not on the grocery list in the same unit: eggs/);
+  assert.match(updated, /Pantry running low, already on the grocery list: oat milk, blueberries/);
+  assert.deepEqual(await store.pantry(), before);
 });
 
 test("brief recognizes exact positive pantry stock", async (t) => {
@@ -82,6 +114,27 @@ test("brief recognizes exact positive pantry stock", async (t) => {
 test("brief normalizes topic names and honors headline detail", async (t) => {
   const result = await call(await connect(t), "brief_get", { topics: [" WEATHER "], detail: "headline" });
   assert.match(text(result), /68 degrees Fahrenheit/); assert.doesNotMatch(text(result), /Calendar|air quality/i);
+});
+
+test("brief topics normalize visible Unicode before source lookup", async (t) => {
+  const result = await call(await connect(t), "brief_get", { topics: [" ＷＥＡＴＨＥＲ "], detail: "headline" });
+  assert.notEqual(result.isError, true);
+  assert.match(text(result), /68 degrees Fahrenheit/);
+  assert.doesNotMatch(text(result), /Calendar|Pantry running low/i);
+});
+
+test("brief bounds untrusted topic count and text without affecting household state", async (t) => {
+  const store = new MemoryStore(); const client = await connect(t, store); const before = await store.groceries();
+  for (const topics of [Array(9).fill("weather"), ["a".repeat(21)], ["weather\u202e"], ["wea\u200bther"], ["weather\n"], [" "]]) {
+    const result = await call(client, "brief_get", { topics });
+    assert.equal(result.isError, true, JSON.stringify(topics));
+  }
+  assert.deepEqual(await store.groceries(), before);
+  const atCountBoundary = await call(client, "brief_get", { topics: Array(8).fill("weather") });
+  assert.notEqual(atCountBoundary.isError, true);
+  const atTextBoundary = await call(client, "brief_get", { topics: ["a".repeat(20)] });
+  assert.equal(atTextBoundary.isError, true);
+  assert.match(text(atTextBoundary), /Available sources:/, "20-character topic reaches source lookup rather than validation failure");
 });
 
 test("unknown or empty topic selections report an error instead of an empty successful brief", async (t) => {

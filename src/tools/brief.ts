@@ -2,7 +2,7 @@
 // Weather, calendar and home are fictional fixtures. No live sources are connected.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { HouseholdStore, groceryKey, ingredientOnHand, ingredientUnit, norm, SYNTHETIC_DEMO_LABEL } from "../store.js";
+import { HouseholdStore, groceryKey, ingredientOnHand, ingredientUnit, norm, normalizedText, SYNTHETIC_DEMO_LABEL } from "../store.js";
 
 export interface BriefPreferences { detail: "headline" | "standard" | "deep"; topics: string[]; }
 export interface BriefSource { name: string; summarize(pref: BriefPreferences): Promise<string>; }
@@ -17,6 +17,13 @@ const calendar = new FixtureSource("calendar", () =>
   "Calendar: 2 fictional events. 9:30am sample standup (15m), 2:00pm sample design review (45m). Example focus window: 10:00 to 11:30.");
 const home = new FixtureSource("home", () =>
   "Home: fictional doors locked and garage closed. Demo bedroom: 66 degrees Fahrenheit. Simulated vacuum finished its sample run at 06:40. No live device state is available.");
+const topicSchema = z.string().max(80, "Topic input is too long.").transform((value, ctx) => {
+  try { return normalizedText(value, "Topic", 20); }
+  catch (error) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : "Invalid topic." });
+    return z.NEVER;
+  }
+});
 
 export function householdSource(store: HouseholdStore): BriefSource {
   return {
@@ -24,7 +31,9 @@ export function householdSource(store: HouseholdStore): BriefSource {
     async summarize(pref) {
       const [plan, pantry, groceries, chores] = await Promise.all([store.mealPlan(), store.pantry(), store.groceries(), store.chores()]);
       const tonight = plan[0];
-      const low = pantry.filter((p) => p.quantity <= p.lowAt).map((p) => p.name);
+      const low = pantry.filter((p) => p.quantity <= p.lowAt);
+      const lowListed = low.filter((item) => groceries.some((line) => groceryKey(line) === groceryKey(item)));
+      const lowNotListed = low.filter((item) => !lowListed.includes(item));
       const due = chores.filter((c) => !c.done && c.dueInDays <= 1);
       const parts: string[] = [];
       if (tonight) {
@@ -33,9 +42,17 @@ export function householdSource(store: HouseholdStore): BriefSource {
         const onList = missing.filter((name) => groceries.some((line) => groceryKey(line) === groceryKey({ name, unit: ingredientUnit(name, pantry) })));
         const toGet = missing.filter((name) => !onList.includes(name));
         if (toGet.length) parts[parts.length - 1] += `, and you still need ${toGet.join(" and ")}`;
+        for (const name of toGet) {
+          const otherUnits = groceries.filter((line) => norm(line.name) === name);
+          if (otherUnits.length) parts.push(`Unit check: ${JSON.stringify(name)} is listed as ${otherUnits.map((line) => `${line.quantity} ${JSON.stringify(line.unit)}`).join(" and ")}; restock uses 1 ${JSON.stringify(ingredientUnit(name, pantry))}. Units are not converted`);
+        }
         if (onList.length) parts.push(`On the grocery list for dinner: ${onList.join(" and ")}`);
       }
-      if (low.length && pref.detail !== "headline") parts.push(`Running low on ${low.join(", ")}`);
+      if (pref.detail !== "headline") {
+        if (lowNotListed.length) parts.push(`Pantry running low, not on the grocery list in the same unit: ${lowNotListed.map((item) => item.name).join(", ")}`);
+        if (lowListed.length) parts.push(`Pantry running low, already on the grocery list: ${lowListed.map((item) => item.name).join(", ")}`);
+        if (low.length) parts.push("Grocery additions do not replenish pantry stock");
+      }
       if (due.length) parts.push(`Due today or tomorrow: ${due.map((c) => `${c.name} for ${c.assignee}`).join(", ")}`);
       return parts.length ? `Household: ${parts.join(". ")}.` : "Household: nothing needs attention.";
     },
@@ -49,7 +66,7 @@ export function registerBriefTools(server: McpServer, store?: HouseholdStore): s
     description: "Builds a synthetic demo morning brief from fictional household, weather, calendar and home fixtures. Reflects grocery and chore changes in the demo store. No live sources are connected.",
     inputSchema: {
       detail: z.enum(["headline", "standard", "deep"]).default("standard").describe("How much detail to speak"),
-      topics: z.array(z.string().trim().min(1).transform(norm)).optional().describe("Restrict to these source names; omit for all"),
+      topics: z.array(topicSchema).max(8, "Choose at most eight topics.").optional().describe("Restrict to at most eight source names of at most 20 normalized characters; omit for all"),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ detail = "standard", topics }) => {

@@ -3,68 +3,139 @@
 A self-hosted **MCP server** that gives an AI assistant one shared brain for
 running a household: pantry, grocery list, meal plan, chores, and the morning
 brief. Built for the Alexa+ track of the Amazon "Build, Ship, Shape" hackathon
-as a Model Context Protocol server any spec-2025-11-25 client can call —
-designed for future Alexa+ integration, which has not been tested.
+as a Model Context Protocol server using revision 2025-11-25. A local web
+client calls the real server. Future Alexa+ integration has not been tested.
 
-Every tool reads and writes **one shared household state**. The demonstrated
+The household workflow uses **one shared household store**. `groceries_add`,
+`chore_log` and `restock_for_meals` can update it; other household operations
+read it. Health and preference helpers report metadata. The demonstrated
 workflow is the tool call for:
 *"Make sure we have everything for dinner the next two nights."*
-`restock_for_meals` reads the meal plan, checks the pantry, skips what is
-already on the grocery list, and writes the missing adds — atomically, in one
-call.
+`restock_for_meals` reads the meal plan and pantry and proposes missing
+name-and-unit pairs. A write requires the token from that preview. State
+validation and the whole batch insertion share one store transaction; if
+the household changed, nothing is added and a fresh preview needs confirmation.
 
 - TypeScript, official [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk) (1.32.x)
 - **Streamable HTTP** transport, protocol revision **2025-11-25**, stateless
-  (one server instance per request — the Lambda-friendly pattern)
-- 46/46 tests green, including real loopback HTTP clients, concurrent and
-  interrupted requests, and atomic concurrent restocking
+  (one server instance per request)
+- a browser client with deliberate restock previews, actual list/brief
+  updates and visible error recovery, using same-origin JSON-RPC
+- 69 passing code/HTTP tests exercise real loopback HTTP clients, interrupted
+  requests, bounded inputs, preview conflicts and atomic concurrent restocking
 
 ## Tools (9, snake_case)
 
 | Tool | What it does | Writes |
 |---|---|---|
 | `health` | Liveness, tool inventory, demo-mode disclosure | no |
-| `brief_get` | Morning brief from household + weather/calendar/home sources; reflects grocery and chore changes made through the other tools | no |
+| `brief_get` | Household and fictional weather/calendar/home sections; household reads dinner ingredients, low stock and due-soon chores | no |
 | `brief_preferences` | Lists brief sources, defaults, and demo disclosure | no |
 | `pantry_query` | Look up one item by name, or hear everything running low | no |
 | `groceries_add` | Add an item to the grocery list; same name+unit lines merge | yes |
 | `mealplan_get` | Read the meal plan and its ingredient checklist | no |
 | `chore_log` | Mark a chore done by exact or unambiguous partial name | yes |
-| `household_summary` | One view: low pantry stock, grocery count, tonight's meal, open chores | no |
-| `restock_for_meals` | The multi-step workflow: check plan + pantry, de-duplicate against the list, ensure one unit of each missing ingredient or low staple. `dry_run: true` previews | yes |
+| `household_summary` | Low pantry stock, actual grocery lines and count, tonight's meal, open chores | no |
+| `restock_for_meals` | Preview missing ingredients and low staples; a commit requires `expected_token` from that preview and atomically validates state before adding one unit per absent name/unit pair | yes |
 
 Tool names use `snake_case`, which avoids dotted-name restrictions in
-common LLM tool-calling APIs. No LLM integration is implemented here. Every tool returns both spoken-first
-`text` content (written to be read aloud) and machine-readable
-`structuredContent` (for cards), plus MCP tool annotations.
+common LLM tool-calling APIs. No LLM integration is implemented here.
+Successful tool results include `text` content and machine-readable
+`structuredContent`. Household results use concise text intended for spoken
+presentation; `health` and `brief_preferences` serialize JSON as text. MCP
+tool annotations are declared in the tool definitions.
 
 ## Quickstart
 
-Node 20 or later (reviewed on Node 24, npm 10, with the committed lock file).
+Node 20 or later (reviewed on Node 24.14.0, npm 10.5.0, with the committed lock file).
 
 ```sh
 npm ci
-npm test        # builds with tsc, then runs all 46 tests
-npm run demo    # real MCP SDK client over loopback: handshake, tools/list, scripted workflow
-npm start       # serves http://127.0.0.1:8099/mcp  (also GET /healthz)
+npm test        # builds with tsc, then runs the code/HTTP regression suites
+npm start
+```
+
+Open **http://127.0.0.1:8099/** in a browser and choose **Connect to demo**.
+The page initializes the MCP connection, sends the initialized notification,
+discovers all nine tools and reads the household state. It uses the real
+server responses, with optional structured-result details. No LLM interprets
+the form controls.
+
+1. Keep **Meals to cover** at 2 and choose **Preview restock**. A fresh server
+   proposes six additions; blueberries are already listed. This explicit
+   `dry_run: true` request changes nothing.
+2. Review items, units and reasons, then choose **Add to demo list**. This
+   separate `dry_run: false` call sends the preview's `expected_token`.
+   The store atomically validates the decision state and adds the batch.
+   If another client changed the pantry, plan or list, the write is rejected
+   with a fresh preview; review and confirm again. A fresh fixture produces
+   six additions, seven grocery lines and a brief that reflects the list.
+3. Preview and add again. The repeated restock adds zero new lines.
+4. Mark **take out recycling** done. It leaves the open chores and the next
+   household brief. Pantry, meal-plan and brief controls expose the remaining
+   journeys; server details show health, preferences and discovered definitions.
+
+Manual grocery additions **increase** the existing quantity for the same
+normalized item name and unit. There is no undo/remove tool. In-flight
+controls prevent double clicks, and the client never retries a write
+automatically. If a write response is lost or uncertain, use **Refresh
+household state**, inspect the actual list and decide whether to retry.
+The read-only refresh does not repeat the write.
+
+All clients share state within one running server. Restart the server for
+fresh fictional fixtures; refreshing the page does not reset it. Adding to
+the grocery list does not replenish pantry stock or place an order. The
+restock is an ingredient checklist, not a recipe-quantity calculation.
+The fixture plan contains three meals; the web selector exposes those three.
+
+Every restock write, including direct MCP calls, requires `expected_token`
+from a prior `dry_run: true` result's `structuredContent.previewToken`.
+Missing/stale tokens return `isError`, `writeApplied: false` and a fresh
+read-only preview. This changes the older direct-commit calling contract.
+Tokens bind decision state and meal count; they are concurrency controls,
+not authentication, permissions or an inventory reservation. Other clients
+can still change the local list before confirmation. A persistent adapter
+must provide the same atomic validation/write guarantee across its writers.
+
+Names support visible Unicode, normalized with NFKC, up to 80 characters;
+units support up to 40. Control and default-ignorable characters are rejected,
+including legitimate joiners and variation selectors. This is a deliberate
+input limit, not complete Unicode spoofing prevention. The list is capped at
+200 name/unit pairs. Quantities and combined
+totals range from 0.001 to 10000 with at most three decimal places.
+Different units are shown separately without conversion. Low stock already
+on the list is identified without pretending the pantry was replenished.
+
+For the scripted SDK-client alternative:
+
+```sh
+npm run demo
 ```
 
 `npm run demo` starts a temporary loopback server, connects a real SDK
 `Client` over Streamable HTTP, lists the tools, and runs the scripted
-household workflow below, then shuts both down. Point MCP Inspector at
+household workflow, then shuts both down. Point MCP Inspector at
 `http://127.0.0.1:8099/mcp` after `npm start` to poke at it interactively.
 
-Environment: `PORT` (default 8099), `MCP_ENDPOINT` (default `/mcp`),
-`ALLOWED_ORIGINS` (comma-separated origins permitted by the browser-Origin
-check).
+Environment: `PORT` (default 8099), `MCP_ENDPOINT` (default `/mcp`) and
+`ALLOWED_ORIGINS` (comma-separated exact HTTP(S) origins, without paths).
+The web client reads the actual MCP path from `GET /demo-config.json`, so a
+custom normalized endpoint also works from the root page. Custom endpoints
+must not shadow `/`, `/app.js`, `/styles.css`, `/healthz` or `/demo-config.json`.
+
+The server binds loopback. Browser requests require the exact same HTTP
+origin by default; native MCP clients may omit Origin. An explicit allowlist
+does not relax the page's same-origin Content Security Policy. The page uses
+only local scripts/styles and same-origin connections, with no inline script,
+external font or remote asset. Result strings are inserted as text. These boundaries
+support a local fictional-data demo, not production authentication.
 
 ## Architecture
 
 ```
-   any MCP client (protocol 2025-11-25)
-   MCP Inspector | scripted SDK client   <-- what exists today
-   (future work, not built: a Bedrock Converse
-    agent loop driving tools/call from a demo web page)
+   MCP clients using protocol 2025-11-25
+   local web client | MCP Inspector | scripted SDK client
+   (no LLM, voice recognition or Alexa integration)
                        |
                        | Streamable HTTP, stateless
                        | (POST /mcp, JSON responses,
@@ -73,7 +144,8 @@ check).
  +---------------------------------------------------+
  | node:http server  (loopback by default)           |
  |   - host allow-list + browser-Origin validation   |
- |   - /healthz for load balancers                   |
+ |   - web page + exact static assets + CSP          |
+ |   - /demo-config.json and /healthz                |
  |   - new McpServer per request (SDK pattern for    |
  |     serverless/stateless deployments)             |
  +------------------------+--------------------------+
@@ -81,8 +153,8 @@ check).
                           v
  +---------------------------------------------------+
  | 9 registered tools                                |
- |   spoken-first text + structuredContent +         |
- |   annotations on every response                   |
+ |   MCP annotations on tool definitions             |
+ |   successful results: text + structuredContent     |
  +------------------------+--------------------------+
                           |
                           v
@@ -91,30 +163,30 @@ check).
  |   - MemoryStore: default, synthetic fixtures,     |
  |     resets on restart                             |
  |   - persistent adapters plug in here; they must   |
- |     implement the atomic ensureGroceries()        |
- |     contract (conditional writes, no read-then-   |
- |     write races)                                  |
+ |     implement atomic batch insertion and          |
+ |     preview validation + commit across writers    |
+ |     (conditional writes or transactions)          |
  +---------------------------------------------------+
 ```
 
 The store interface is the seam for a **planned (not built)** AWS deployment:
 a DynamoDB adapter behind the same interface, fronted by Lambda + API Gateway
 (the official stateless-MCP-on-Lambda pattern), with the agent loop calling
-Bedrock Converse. None of that is implemented in this repo. App Runner was
-considered and dropped — it is closed to new customers.
+Bedrock Converse. None of that is implemented in this repo.
 
 ## Demo mode (honesty notes)
 
 All household data in this repository is **fictional fixtures** (a synthetic
-demo family); every tool response is labeled `Synthetic demo: fictional
-household data.` The submission demo runs against this local in-memory store.
+demo family). Successful tool results disclose `Synthetic demo: fictional
+household data.` in text or a JSON `notice` field. Local demonstrations run
+against this local in-memory store.
 
 Bedrock integration is **designed-for, not integrated**: the tool surface is
 shaped for it (snake_case names for Converse tool-calling, structuredContent
 for cards), but this repo makes no AWS calls, ships no credentials, and
 connects no live household sources, purchases, or devices. The server
-deliberately binds `127.0.0.1` and runs unauthenticated — fine for a demo and
-for judging, wrong for real household data or public exposure.
+deliberately binds `127.0.0.1` and runs unauthenticated for a fictional-data
+demo and local judging. It is not ready for real household data or public exposure.
 
 Writes affect the in-memory demonstration store and reset on restart. The
 demo checks an ingredient checklist; it does not calculate recipe quantities
@@ -122,13 +194,29 @@ or claim that adding groceries replenishes the pantry.
 
 ## Tests
 
-46/46 across four suites (`src/test/`): brief composition and topic
+69 tests across four suites (`src/test/`) cover brief composition and topic
 filtering, household-tool behavior (normalization, ambiguous chore matching,
 dedup, atomic batch validation), real loopback HTTP (initialize negotiation
 of 2025-11-25, tools/list, state across stateless requests, 40 concurrent
 calls, Origin refusal, /healthz, malformed/oversized bodies, interrupted
-requests), and server-level checks. HTTP tests need local socket access.
+requests), static routes/configuration/security headers, exact-origin checks
+for browser requests, pantry ambiguity, read-only grocery-list exposure,
+mandatory preview tokens, conflict rejection and bounded numeric/text input.
+HTTP tests need local socket access.
+
+A separate October 22 run passed 58 local headless Chromium checks using
+Playwright 1.58 and the real SDK 1.32.1. These cover all nine tool journeys,
+non-mutating previews, another client's intervening changes, zero-write stale
+preview rejection, explicit reconfirmation, duplicate-safe restocking,
+keyboard focus after actions/errors, preservation of user-moved focus,
+truthful failed-refresh and lost-write recovery without automatic retries,
+and phone layouts at 360, 390 and 430 pixels. No uncaught page errors or
+external browser requests occurred. Screenshots and request/response receipts
+are retained in the separate review packet. The browser runner is separate
+from `npm test`; these checks are not a complete accessibility audit or a
+final submission video. No physical device, screen-reader or human household
+validation is claimed.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright 2026 Jordan Skinner.
+MIT. See [LICENSE](LICENSE). Copyright 2026 Jordan Skinner.

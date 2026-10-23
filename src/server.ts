@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, ServerResponse, IncomingMessage } from "node:http";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerSystemTools, SERVICE } from "./tools/system.js";
@@ -29,36 +30,84 @@ function errorResponse(res: ServerResponse, status: number, message: string) {
   }));
 }
 
-export function originAllowed(req: IncomingMessage, allowedOrigins: string[] = []): boolean {
-  if (!req.headers.origin || allowedOrigins.includes(req.headers.origin)) return true;
+function localBase(req: IncomingMessage): URL | undefined {
+  const host = req.headers.host;
+  if (!host || !/^(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?$/i.test(host)) return;
+  try { return new URL(`http://${host}`); } catch { return; }
+}
+
+function isHttpOrigin(value: string): boolean {
   try {
-    const origin = new URL(req.headers.origin);
-    if (origin.host === req.headers.host) return true;
-    return ["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname);
+    const parsed = new URL(value);
+    return ["http:", "https:"].includes(parsed.protocol) && parsed.origin === value;
   } catch { return false; }
 }
+
+export function originAllowed(req: IncomingMessage, allowedOrigins: string[] = []): boolean {
+  const origin = req.headers.origin;
+  if (origin === undefined) return true; // Native MCP clients do not send a browser Origin; an empty header is invalid.
+  if (!isHttpOrigin(origin)) return false;
+  return origin === localBase(req)?.origin || allowedOrigins.includes(origin);
+}
+
+const webAssets = new Map([
+  ["/", { name: "index.html", type: "text/html; charset=utf-8" }],
+  ["/app.js", { name: "app.js", type: "text/javascript; charset=utf-8" }],
+  ["/styles.css", { name: "styles.css", type: "text/css; charset=utf-8" }],
+]);
+const reservedPaths = new Set([...webAssets.keys(), "/healthz", "/demo-config.json"]);
+const webRoot = new URL("../web/", import.meta.url);
 
 export function createDemoHttpServer(options: { store?: HouseholdStore; endpoint?: string; allowedOrigins?: string[] } = {}) {
   const store = options.store ?? new MemoryStore();
   const endpoint = options.endpoint ?? "/mcp";
-  if (!endpoint.startsWith("/") || endpoint.includes("?") || endpoint.includes("#")) {
-    throw new Error("MCP_ENDPOINT must be an absolute URL path without a query or fragment");
+  if (!/^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*\/?$/.test(endpoint)
+      || new URL(endpoint, "http://localhost").pathname !== endpoint || reservedPaths.has(endpoint)) {
+    throw new Error("MCP_ENDPOINT must be a normalized absolute path that does not shadow demo routes");
   }
+  const allowedOrigins = options.allowedOrigins ?? [];
+  if (allowedOrigins.some(origin => !isHttpOrigin(origin))) throw new Error("ALLOWED_ORIGINS must contain exact HTTP(S) origins without paths");
   const httpServer = createServer(async (req, res) => {
     let server: McpServer | undefined;
     try {
-      const base = new URL(`http://${req.headers.host ?? "invalid"}`);
-      if (!["127.0.0.1", "localhost"].includes(base.hostname)) {
+      res.setHeader("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'");
+      res.setHeader("x-content-type-options", "nosniff");
+      res.setHeader("referrer-policy", "no-referrer");
+      res.setHeader("cache-control", "no-store");
+      const base = localBase(req);
+      if (!base) {
         errorResponse(res, 403, "Local demo host required");
         return;
       }
-      if (!originAllowed(req, options.allowedOrigins ?? [])) {
+      if (!originAllowed(req, allowedOrigins)) {
         errorResponse(res, 403, "Untrusted origin");
         return;
       }
-      const url = new URL(req.url ?? "/", base);
-      if (url.pathname === "/healthz") {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, service: SERVICE.name, version: SERVICE.version, demo: true }));
+      const target = req.url ?? "/";
+      if (!target.startsWith("/") || target.startsWith("//") || target.includes("\\")) {
+        errorResponse(res, 400, "Absolute request path required");
+        return;
+      }
+      const url = new URL(target, base);
+      if (url.pathname !== target.split("?")[0]) {
+        errorResponse(res, 400, "Normalized request path required");
+        return;
+      }
+      const asset = webAssets.get(url.pathname);
+      if (asset || url.pathname === "/healthz" || url.pathname === "/demo-config.json") {
+        if (req.method !== "GET") {
+          res.setHeader("allow", "GET");
+          errorResponse(res, 405, "Method not allowed");
+          return;
+        }
+        if (asset) {
+          const body = await readFile(new URL(asset.name, webRoot));
+          res.writeHead(200, { "content-type": asset.type }).end(body);
+        } else {
+          const body = url.pathname === "/demo-config.json" ? { mcpEndpoint: endpoint }
+            : { ok: true, service: SERVICE.name, version: SERVICE.version, demo: true };
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+        }
         return;
       }
       if (url.pathname !== endpoint) {
@@ -99,7 +148,9 @@ if (process.env.NODE_ENV !== "test" && process.argv[1] && resolve(process.argv[1
   const httpServer = createDemoHttpServer({ endpoint, allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean) });
   httpServer.listen(port, "127.0.0.1", () => {
     const address = httpServer.address();
-    console.log(`Synthetic Household Brain demo listening on http://127.0.0.1:${typeof address === "object" ? address?.port : port}${endpoint}`);
+    const demoBase = `http://127.0.0.1:${typeof address === "object" ? address?.port : port}`;
+    console.log(`Synthetic Household Brain demo listening on ${demoBase}/`);
+    console.log(`Guided web client: ${demoBase}/ | MCP endpoint: ${demoBase}${endpoint}`);
   });
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.on(signal, () => { httpServer.closeAllConnections(); httpServer.close(() => process.exit(0)); });
