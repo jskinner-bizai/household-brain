@@ -21,8 +21,11 @@ the household changed, nothing is added and a fresh preview needs confirmation.
   (one server instance per request)
 - a browser client with deliberate restock previews, actual list/brief
   updates and visible error recovery, using same-origin JSON-RPC
-- 69 passing code/HTTP tests exercise real loopback HTTP clients, interrupted
-  requests, bounded inputs, preview conflicts and atomic concurrent restocking
+- code/HTTP tests exercise real loopback clients, interrupted requests, bounded
+  model/tool inputs, preview conflicts, persistence rollback and concurrent restocking
+- an optional server-side Amazon Bedrock Converse planner reads real MCP tools
+  and proposes a restock; its model cannot commit changes
+- optional bounded local-file persistence preserves confirmed changes across restarts
 
 ## Tools (9, snake_case)
 
@@ -39,7 +42,8 @@ the household changed, nothing is added and a fresh preview needs confirmation.
 | `restock_for_meals` | Preview missing ingredients and low staples; a commit requires `expected_token` from that preview and atomically validates state before adding one unit per absent name/unit pair | yes |
 
 Tool names use `snake_case`, which avoids dotted-name restrictions in
-common LLM tool-calling APIs. No LLM integration is implemented here.
+common LLM tool-calling APIs. The optional planner uses Amazon Nova Lite through
+Bedrock Converse; it is disabled by default. Mock mode makes no AWS requests.
 Successful tool results include `text` content and machine-readable
 `structuredContent`. Household results use concise text intended for spoken
 presentation; `health` and `brief_preferences` serialize JSON as text. MCP
@@ -50,7 +54,7 @@ tool annotations are declared in the tool definitions.
 Node 20 or later (reviewed on Node 24.14.0, npm 10.5.0, with the committed lock file).
 
 ```sh
-npm ci
+npm ci --ignore-scripts
 npm test        # builds with tsc, then runs the code/HTTP regression suites
 npm start
 ```
@@ -87,8 +91,9 @@ automatically. If a write response is lost or uncertain, use **Reload household*
 inspect the actual list and decide whether to retry.
 The read-only refresh does not repeat the write.
 
-All clients share state within one running server. Restart the server for
-fresh fictional fixtures; refreshing the page does not reset it. Adding to
+All clients share one store. With the default in-memory store, restarting
+creates fresh fictional fixtures; refreshing the page does not reset it. Set
+`HOUSEHOLD_STATE_FILE` for durable local state, as described below. Adding to
 the grocery list does not replenish pantry stock or place an order. The
 restock is an ingredient checklist, not a recipe-quantity calculation.
 The fixture plan contains three meals; the web selector exposes those three.
@@ -121,12 +126,37 @@ npm run demo
 `Client` over Streamable HTTP, lists the tools, and runs the scripted
 household workflow, then shuts both down. Point MCP Inspector at
 `http://127.0.0.1:8099/mcp` after `npm start` to poke at it interactively.
+This older scripted demo automatically commits synthetic changes. It is not
+evidence of human confirmation; use the web client for that workflow.
+
+## Optional planner and persistent state
+
+See [AWS-DEMO.md](AWS-DEMO.md) for offline/mock setup, the bounded live proof
+procedure, model permissions, exact limits, cost calculation and judging notes.
+The ordinary MCP checklist is free to run and needs no AWS account. No API key
+or credential is shipped in this repository.
+
+For a mock planner with real MCP calls and durable fictional state in PowerShell:
+
+```powershell
+$env:HOUSEHOLD_PLANNER_MODE = 'mock'
+$env:HOUSEHOLD_STATE_FILE = Join-Path (Get-Location) 'data/household.snapshot.json'
+npm run build
+npm start
+```
+
+Open the sample household and choose **Plan these meals**. The mock model reads
+the meal plan and pantry, then requests a dry-run preview. It makes no AWS calls.
+Only **Add items to sample list** commits the retained preview. Refreshing the
+page can restore that proposal without repeating inference. A server restart
+invalidates old preview tokens while retaining confirmed household state.
 
 Environment: `PORT` (default 8099), `MCP_ENDPOINT` (default `/mcp`) and
 `ALLOWED_ORIGINS` (comma-separated exact HTTP(S) origins, without paths).
 The web client reads the actual MCP path from `GET /demo-config.json`, so a
 custom normalized endpoint also works from the root page. Custom endpoints
-must not shadow `/`, `/app.js`, `/styles.css`, `/healthz` or `/demo-config.json`.
+must not shadow static, health, config or planner routes. Planner mode is
+`off` (default), `mock` or explicitly authorized `bedrock`.
 
 The server binds loopback. Browser requests require the exact same HTTP
 origin by default; native MCP clients may omit Origin. An explicit allowlist
@@ -140,7 +170,7 @@ support a local fictional-data demo, not production authentication.
 ```
    MCP clients using protocol 2025-11-25
    local web client | MCP Inspector | scripted SDK client
-   (no LLM, voice recognition or Alexa integration)
+   optional server-side Bedrock planner (or disclosed mock)
                        |
                        | Streamable HTTP, stateless
                        | (POST /mcp, JSON responses,
@@ -167,39 +197,41 @@ support a local fictional-data demo, not production authentication.
  | HouseholdStore interface (src/store.ts)           |
  |   - MemoryStore: default, synthetic fixtures,     |
  |     resets on restart                             |
- |   - persistent adapters plug in here; they must   |
- |     implement atomic batch insertion and          |
- |     preview validation + commit across writers    |
- |     (conditional writes or transactions)          |
+ |   - FileStore: bounded local versioned snapshots  |
+ |     one writer, atomic replace before publication |
+ |     preview tokens invalidated on restart         |
  +---------------------------------------------------+
 ```
 
-The store interface is the seam for a **planned (not built)** AWS deployment:
-a DynamoDB adapter behind the same interface, fronted by Lambda + API Gateway
-(the official stateless-MCP-on-Lambda pattern), with the agent loop calling
-Bedrock Converse. None of that is implemented in this repo.
+The implemented optional planner calls Bedrock Converse from the local Node
+backend and drives the same MCP server through a real SDK HTTP client. It needs
+no AWS deployment. Lambda, API Gateway, DynamoDB and AgentCore deployment are
+not implemented or required for this demonstration.
 
 ## Demo mode (honesty notes)
 
 All household data in this repository is **fictional fixtures** (a synthetic
 demo family). Successful tool results disclose `Synthetic demo: fictional
 household data.` in text or a JSON `notice` field. Local demonstrations run
-against this local in-memory store.
+against the selected local memory or file store.
 
-Bedrock integration is **designed-for, not integrated**: the tool surface is
-shaped for it (snake_case names for Converse tool-calling, structuredContent
-for cards), but this repo makes no AWS calls, ships no credentials, and
-connects no live household sources, purchases, or devices. The server
+Bedrock is an optional integration, disabled by default. Mock mode must never
+be presented as a live AWS response. The live mode uses fictional household
+fixtures and the operator's explicitly selected named personal AWS login; it
+ships no credentials and connects no live household sources, purchases or devices. The server
 deliberately binds `127.0.0.1` and runs unauthenticated for a fictional-data
 demo and local judging. It is not ready for real household data or public exposure.
 
-Writes affect the in-memory demonstration store and reset on restart. The
+Writes affect only the selected fictional local store. File persistence is
+single-writer process-restart persistence, not a guaranteed power-loss database.
+A crash leaves a lock requiring deliberate manual recovery; external editors
+and hostile local filesystem races are outside this private-store contract. The
 demo checks an ingredient checklist; it does not calculate recipe quantities
 or claim that adding groceries replenishes the pantry.
 
 ## Tests
 
-69 tests across four suites (`src/test/`) cover brief composition and topic
+Tests across `src/test/` cover brief composition and topic
 filtering, household-tool behavior (normalization, ambiguous chore matching,
 dedup, atomic batch validation), real loopback HTTP (initialize negotiation
 of 2025-11-25, tools/list, state across stateless requests, 40 concurrent
@@ -208,6 +240,14 @@ requests), static routes/configuration/security headers, exact-origin checks
 for browser requests, pantry ambiguity, read-only grocery-list exposure,
 mandatory preview tokens, conflict rejection and bounded numeric/text input.
 HTTP tests need local socket access.
+
+New suites cover planner tool restrictions, strict arguments, token withholding,
+request/input/output limits, failed and cancelled model usage, SDK SigV4 signing
+and no retries, HTTP one-attempt concurrency, the durable live-attempt lease,
+file rollback, corrupt snapshots, restart invalidation and duplicate prevention.
+All automated model responses use test doubles. `node scripts/ui-smoke.mjs`
+runs a separate headless Chrome test with a fresh profile; its automated mock
+confirmation is not evidence of human approval for a live demonstration.
 
 A separate October 22 run passed 58 local headless Chromium checks using
 Playwright 1.58 and the real SDK 1.32.1. These cover all nine tool journeys,

@@ -285,3 +285,18 @@ footer { padding: 6px 0 32px; max-width: 830px; color: #5f6d56; font-size: .73re
 @media (prefers-reduced-motion: no-preference) {
   button { transition: background-color .12s ease, border-color .12s ease; }
 }
+
+/* Review fixes: compact one-line preview rows keep confirmation closer on narrow screens. */
+.preview-item { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.preview-item-name { display: inline; min-width: 0; overflow-wrap: anywhere; }
+.preview-item-meta { display: inline; margin-top: 0; flex-shrink: 0; text-align: right; }
+.change-summary { font-weight: 600; color: #5a3d12; margin: -4px 0 12px; }
+.count-badge { display: inline-block; text-align: center; }
+
+.planner-section { margin: 1.25rem 0; padding: 1rem; border: 1px solid currentColor; border-radius: .75rem; }
+.planner-section[hidden] { display: none; }
+.planner-section.has-proposal { margin: .5rem 0; padding: 0; border: 0; }
+.planner-section.has-proposal #planner-heading,
+.planner-section.has-proposal #planner-intro,
+.planner-section.has-proposal #run-planner { display: none; }
+.planner-section.has-proposal #planner-mode { margin: 0; font-size: .875rem; }

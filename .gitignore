@@ -10,3 +10,7 @@ kaggle.json
 
 # Internal local review metadata. Never publish.
 .mimosa/
+data/
+*.snapshot.json
+*.snapshot.json.lock
+*.demo-receipt.json

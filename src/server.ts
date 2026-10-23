@@ -5,11 +5,14 @@ import { createServer, ServerResponse, IncomingMessage } from "node:http";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { registerSystemTools, SERVICE } from "./tools/system.js";
 import { registerBriefTools } from "./tools/brief.js";
 import { registerHouseholdTools } from "./tools/household.js";
 
 import { HouseholdStore, MemoryStore } from "./store.js";
+import { HouseholdPlanner, PlannerError, type PlannerModel, type PlannerResult, type PlannerProgress } from "./planner.js";
 
 const defaultStore: HouseholdStore = new MemoryStore();
 
@@ -55,10 +58,50 @@ const webAssets = new Map([
   ["/app.js", { name: "app.js", type: "text/javascript; charset=utf-8" }],
   ["/styles.css", { name: "styles.css", type: "text/css; charset=utf-8" }],
 ]);
-const reservedPaths = new Set([...webAssets.keys(), "/healthz", "/demo-config.json"]);
+const reservedPaths = new Set([...webAssets.keys(), "/healthz", "/demo-config.json", "/planner/preview", "/planner/result"]);
 const webRoot = new URL("../web/", import.meta.url);
 
-export function createDemoHttpServer(options: { store?: HouseholdStore; endpoint?: string; allowedOrigins?: string[] } = {}) {
+class PlannerRequestError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+async function plannerDays(req: IncomingMessage): Promise<number> {
+  if (req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
+    throw new PlannerRequestError(415, "Use application/json.");
+  }
+  if (Number(req.headers["content-length"] ?? 0) > 2048) {
+    req.resume(); throw new PlannerRequestError(413, "Planner request is too large.");
+  }
+  const body = await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = []; let size = 0, settled = false;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 2048) {
+        chunks.length = 0;
+        if (!settled) { settled = true; reject(new PlannerRequestError(413, "Planner request is too large.")); }
+      } else if (!settled) chunks.push(chunk);
+    });
+    req.once("end", () => { if (!settled) { settled = true; resolve(Buffer.concat(chunks).toString("utf8")); } });
+    req.once("error", () => { if (!settled) { settled = true; reject(new PlannerRequestError(400, "Planner request interrupted.")); } });
+    req.once("aborted", () => { if (!settled) { settled = true; reject(new PlannerRequestError(400, "Planner request interrupted.")); } });
+  });
+  let value;
+  try { value = JSON.parse(body); } catch { throw new PlannerRequestError(400, "Invalid planner request."); }
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "days")
+      || !Number.isInteger(value.days) || value.days < 1 || value.days > 7) {
+    throw new PlannerRequestError(400, "Choose between one and seven meals. No other planner arguments are accepted.");
+  }
+  return value.days;
+}
+
+export interface DemoServerOptions {
+  store?: HouseholdStore;
+  endpoint?: string;
+  allowedOrigins?: string[];
+  persistentState?: boolean;
+  planner?: { model: PlannerModel; mode: "mock" | "bedrock"; beforeRun?: () => Promise<void>; onProgress?: (progress: PlannerProgress) => Promise<void> };
+}
+
+export function createDemoHttpServer(options: DemoServerOptions = {}) {
   const store = options.store ?? new MemoryStore();
   const endpoint = options.endpoint ?? "/mcp";
   if (!/^\/[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*\/?$/.test(endpoint)
@@ -67,6 +110,26 @@ export function createDemoHttpServer(options: { store?: HouseholdStore; endpoint
   }
   const allowedOrigins = options.allowedOrigins ?? [];
   if (allowedOrigins.some(origin => !isHttpOrigin(origin))) throw new Error("ALLOWED_ORIGINS must contain exact HTTP(S) origins without paths");
+  let plannerClient: Client | undefined;
+  const getPlannerClient = async () => {
+    if (!plannerClient) {
+      const address = httpServer.address();
+      if (!address || typeof address !== "object") throw new Error("MCP server unavailable");
+      plannerClient = new Client({ name: "household-brain-planner", version: "1" });
+      await plannerClient.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}${endpoint}`)));
+    }
+    return plannerClient;
+  };
+  const planner = options.planner ? new HouseholdPlanner({
+    model: options.planner.model,
+    onProgress: options.planner.onProgress,
+    mcp: {
+      listTools: async () => (await getPlannerClient()).listTools(),
+      callTool: async call => (await getPlannerClient()).callTool(call),
+    },
+  }) : undefined;
+  let plannerAttempted = false;
+  let cachedPlan: { days: number; result: PlannerResult } | undefined;
   const httpServer = createServer(async (req, res) => {
     let server: McpServer | undefined;
     try {
@@ -104,9 +167,54 @@ export function createDemoHttpServer(options: { store?: HouseholdStore; endpoint
           const body = await readFile(new URL(asset.name, webRoot));
           res.writeHead(200, { "content-type": asset.type }).end(body);
         } else {
-          const body = url.pathname === "/demo-config.json" ? { mcpEndpoint: endpoint }
+          const body = url.pathname === "/demo-config.json" ? {
+            mcpEndpoint: endpoint,
+            ...(options.persistentState ? { persistentState: true } : {}),
+            ...(options.planner ? { planner: { endpoint: "/planner/preview", resultEndpoint: "/planner/result", mode: options.planner.mode, maximumRequests: 6, confirmationRequired: true } } : {}),
+          }
             : { ok: true, service: SERVICE.name, version: SERVICE.version, demo: true };
           res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+        }
+        return;
+      }
+      if (url.pathname === "/planner/result") {
+        if (req.method !== "GET") { res.setHeader("allow", "GET"); errorResponse(res, 405, "Method not allowed"); return; }
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(cachedPlan
+          ? { available: true, days: cachedPlan.days, ...cachedPlan.result, mode: options.planner!.mode }
+          : { available: false, attempted: plannerAttempted, ...(planner ? { progress: planner.progress() } : {}) }));
+        return;
+      }
+      if (url.pathname === "/planner/preview") {
+        if (req.method !== "POST") {
+          res.setHeader("allow", "POST"); errorResponse(res, 405, "Method not allowed"); return;
+        }
+        if (!planner) { errorResponse(res, 503, "The optional planner is unavailable. The checklist still works without it."); return; }
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), 90_000);
+        let ownsAttempt = false;
+        res.once("close", () => { if (!res.writableEnded) abort.abort(); });
+        try {
+          const days = await plannerDays(req);
+          if (plannerAttempted) throw new PlannerRequestError(409, "This server's single planner attempt has already been used. It will not run again automatically.");
+          plannerAttempted = true;
+          ownsAttempt = true;
+          // The live runner reserves its durable one-attempt receipt before any
+          // model request. A lost response or provider error never resets it.
+          await options.planner?.beforeRun?.();
+          const result = await planner.run({ days }, abort.signal);
+          cachedPlan = { days, result };
+          if (!res.destroyed) res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ...result, mode: options.planner!.mode }));
+        } catch (error) {
+          const status = error instanceof PlannerRequestError ? error.status : error instanceof PlannerError ? 422 : 503;
+          const message = error instanceof PlannerRequestError || error instanceof PlannerError ? error.message
+            : "Planner unavailable or the demo receipt could not be reserved. Nothing was added. No request will be retried automatically.";
+          if (!res.destroyed && !res.headersSent) errorResponse(res, status, message);
+        } finally {
+          clearTimeout(timer);
+          if (ownsAttempt) {
+            await plannerClient?.close().catch(() => {});
+            plannerClient = undefined;
+          }
         }
         return;
       }
@@ -145,7 +253,25 @@ if (process.env.NODE_ENV !== "test" && process.argv[1] && resolve(process.argv[1
   const port = Number(process.env.PORT ?? 8099);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid PORT");
   const endpoint = process.env.MCP_ENDPOINT ?? "/mcp";
-  const httpServer = createDemoHttpServer({ endpoint, allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean) });
+  const mode = process.env.HOUSEHOLD_PLANNER_MODE ?? "off";
+  if (!["off", "mock", "bedrock"].includes(mode)) throw new Error("HOUSEHOLD_PLANNER_MODE must be off, mock or bedrock");
+  if (mode === "bedrock" && (process.env.HOUSEHOLD_AWS_DEMO_APPROVED !== "1" || !process.env.HOUSEHOLD_AWS_DEMO_RECEIPT)) {
+    throw new Error("Live mode requires explicit demo approval and a durable HOUSEHOLD_AWS_DEMO_RECEIPT path. No AWS request was made.");
+  }
+  const persistent = process.env.HOUSEHOLD_STATE_FILE;
+  const fileStore = persistent ? await (await import("./file-store.js")).FileStore.open(resolve(persistent)) : undefined;
+  let plannerConfig: DemoServerOptions["planner"];
+  if (mode === "mock") plannerConfig = { model: (await import("./mock-model.js")).createMockModel(), mode };
+  if (mode === "bedrock") {
+    const { reserveDemoRun, createDemoJournal } = await import("./demo-lease.js");
+    plannerConfig = {
+      model: (await import("./bedrock.js")).createBedrockModel(), mode,
+      beforeRun: () => reserveDemoRun(process.env.HOUSEHOLD_AWS_DEMO_RECEIPT!),
+      onProgress: createDemoJournal(process.env.HOUSEHOLD_AWS_DEMO_RECEIPT!),
+    };
+  }
+  const httpServer = createDemoHttpServer({ endpoint, store: fileStore, persistentState: Boolean(fileStore), planner: plannerConfig,
+    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean) });
   httpServer.listen(port, "127.0.0.1", () => {
     const address = httpServer.address();
     const demoBase = `http://127.0.0.1:${typeof address === "object" ? address?.port : port}`;
@@ -153,6 +279,6 @@ if (process.env.NODE_ENV !== "test" && process.argv[1] && resolve(process.argv[1
     console.log(`Guided web client: ${demoBase}/ | MCP endpoint: ${demoBase}${endpoint}`);
   });
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.on(signal, () => { httpServer.closeAllConnections(); httpServer.close(() => process.exit(0)); });
+    process.on(signal, () => { httpServer.closeAllConnections(); httpServer.close(() => { void fileStore?.close().finally(() => process.exit(0)); if (!fileStore) process.exit(0); }); });
   }
 }

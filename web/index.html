@@ -21,8 +21,8 @@
       <p id="journey-help" class="intro">See the meals, check what’s missing, then review the additions before they reach your list.</p>
     </div>
     <aside class="notice" aria-label="Demo scope">
-      <p><span class="sample-dot" aria-hidden="true"></span><strong>Fictional household data.</strong> Changes reset when the server restarts. No purchases or connected accounts.</p>
-      <details class="scope-details"><summary>About this sample</summary><p>The grocery list changes in this running server only. Changes reset when the server restarts, not when you refresh this page. No devices, Alexa, speech recognition, LLM or AWS service is connected. The server has no authentication or persistence. Browser requests use exact Host/Origin checks. Preview tokens protect against changed state; they are not authentication.</p></details>
+      <p id="scope-summary"><span class="sample-dot" aria-hidden="true"></span><strong>Fictional household data.</strong> Changes reset when the server restarts. No purchases or connected accounts.</p>
+      <details class="scope-details"><summary>About this sample</summary><p id="scope-detail">The grocery list changes in this running server only. Changes reset when the server restarts, not when you refresh this page. No devices, Alexa, speech recognition, LLM or AWS service is connected. The server has no authentication or persistence. Browser requests use exact Host/Origin checks. Preview tokens protect against changed state; they are not authentication.</p></details>
     </aside>
     <section class="connection" aria-label="Connection">
       <div class="connection-copy"><strong id="connection-state">Start with the sample household</strong><p id="connection-help">Load its meal plan, pantry and existing list. This won’t add anything.</p></div>
@@ -45,15 +45,22 @@
         <div class="section-heading"><div><p class="eyebrow step-label">02 / CHECK BEFORE YOU ADD</p><h2 id="restock-heading">What should go on the list?</h2></div><span class="step-tag">You confirm the change</span></div>
         <p class="section-intro">Check planned ingredients and low staples against what’s in the pantry or already on the list.</p>
         <div class="controls"><div class="field"><label for="days">Meals to cover</label><select id="days"><option value="1">1 planned meal</option><option value="2" selected>2 planned meals</option><option value="3">3 planned meals</option></select></div><button id="preview-restock" type="button" data-action disabled>Check what to add</button></div>
+        <section id="planner-section" class="planner-section" aria-labelledby="planner-heading" hidden>
+          <h3 id="planner-heading">Ask the planner to check</h3>
+          <p id="planner-mode"></p>
+          <p id="planner-intro">The planner can read the household and propose additions. You still review and confirm every addition.</p>
+          <button id="run-planner" type="button" disabled>Plan these meals</button>
+        </section>
         <div id="preview" class="preview" role="region" aria-label="Restock preview" tabindex="-1"><p>Your proposed additions will appear here. Checking won’t change the list.</p></div>
         <div class="confirm-row"><button id="commit-restock" type="button" disabled>Add to sample list</button><p class="confirm-help">Nothing is added until you confirm.</p></div>
         <p class="quantity-note">A checklist, not a serving calculator: each missing item adds <strong>one unit</strong>. Check amounts before shopping.</p>
         <details class="restock-rules"><summary>How the check works</summary><p>The server adds one unit per missing item, not recipe-serving quantities. A name in another unit stays separate and is shown before confirmation. Every add validates the preview and current household state together, atomically. If relevant state changed, nothing is added: review the updated preview and confirm again.</p></details>
         <div id="restock-result" class="result" role="region" aria-label="Restock result" tabindex="-1"></div>
+        <div id="planner-result" class="result" role="region" aria-label="Planner result" tabindex="-1"></div>
       </section>
     </div>
     <section id="journey-step-3" class="card groceries-card" aria-labelledby="groceries-heading">
-      <div class="section-heading"><div><p class="eyebrow step-label">03 / ALL IN ONE PLACE</p><h2 id="groceries-heading">Your sample shopping list <span id="grocery-count" class="count-badge"></span></h2></div><p class="list-note">A list to review.<br>No order is placed.</p></div>
+      <div class="section-heading"><div><p class="eyebrow step-label">03 / ALL IN ONE PLACE</p><h2 id="groceries-heading">Your sample shopping list <span id="grocery-count" class="count-badge"></span></h2></div><p class="list-note">A list to review.<br> No order is placed.</p></div>
       <div id="grocery-list"><p class="empty-state">Open the household to see what’s already on the list.</p></div>
       <details class="manual-add"><summary>Add something else</summary><form id="grocery-form"><div class="field"><label for="grocery-name">Grocery item</label><input id="grocery-name" name="name" required maxlength="80" placeholder="For example, flour" autocomplete="off"></div><div class="form-row"><div class="field"><label for="grocery-quantity">Quantity</label><input id="grocery-quantity" name="quantity" type="number" min="0.001" max="10000" step="0.001" value="1" required></div><div class="field"><label for="grocery-unit">Unit</label><input id="grocery-unit" name="unit" value="each" required maxlength="40"></div></div><p class="consequence">If this name and unit are already listed, adding it increases that quantity. There is no undo or remove action.</p><button type="submit" data-action disabled>Add grocery item</button></form><div id="grocery-result" class="result" role="region" aria-label="Grocery result" tabindex="-1"></div></details>
     </section>
@@ -69,7 +76,7 @@
       </section>
     </details>
     <details class="card server-details"><summary>Under the hood: server and tools</summary><p>The page uses real same-origin JSON-RPC initialization, tool discovery and calls. Expand a response to inspect its full text and structured content.</p><h3>Connection</h3><pre id="protocol-details">Not connected.</pre><h3>Health</h3><pre id="health-details">Not loaded.</pre><h3>Brief preferences</h3><pre id="preference-details">Not loaded.</pre><h3 id="tool-heading">Discovered tools</h3><div id="tool-details"></div></details>
-    <footer><p>Household Brain is a self-hosted MCP prototype for the Alexa+ track. Native Alexa and cloud integration remain future work. Write requests are never retried automatically. This sample list does not replenish the pantry.</p></footer>
+    <footer><p id="integration-disclosure">Household Brain is a self-hosted MCP prototype for the Alexa+ track. Native Alexa and cloud integration remain future work. Write requests are never retried automatically. This sample list does not replenish the pantry.</p></footer>
   </main>
 </body>
 </html>

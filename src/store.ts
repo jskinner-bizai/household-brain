@@ -21,6 +21,18 @@ export interface RestockResult {
   previewRequired?: boolean; previewChanged?: boolean;
 }
 
+/** A complete transaction candidate; persistence must succeed before publication. */
+export interface HouseholdState {
+  pantryItems: PantryItem[];
+  groceryLines: GroceryLine[];
+  meal: MealPlanEntry[];
+  choreList: Chore[];
+}
+export interface MemoryStoreOptions {
+  initialState?: HouseholdState;
+  beforePublish?: (candidate: HouseholdState) => Promise<void>;
+}
+
 export interface HouseholdStore {
   pantry(): Promise<PantryItem[]>;
   groceries(): Promise<GroceryLine[]>;
@@ -126,41 +138,67 @@ export class MemoryStore implements HouseholdStore {
     { name: "water the plants", assignee: "Leo (fictional)", dueInDays: 2, done: false },
     { name: "refill dog bowl", assignee: "Dad (fictional)", dueInDays: 0, done: false },
   ];
+  constructor(private readonly options: MemoryStoreOptions = {}) {
+    if (options.initialState) this.publish(structuredClone(options.initialState));
+  }
+  /** Returns detached data for a durable adapter's initial snapshot. */
+  snapshot(): HouseholdState {
+    return structuredClone({ pantryItems: this.pantryItems, groceryLines: this.groceryLines, meal: this.meal, choreList: this.choreList });
+  }
+  private publish(candidate: HouseholdState): void {
+    this.pantryItems = candidate.pantryItems;
+    this.groceryLines = candidate.groceryLines;
+    this.meal = candidate.meal;
+    this.choreList = candidate.choreList;
+  }
+  private async commit(candidate: HouseholdState): Promise<void> {
+    // Never expose a candidate, even to readers, until its durable write succeeds.
+    // A rejected write leaves both the published state and preview token unchanged.
+    await this.options.beforePublish?.(structuredClone(candidate));
+    this.publish(candidate);
+  }
   async pantry() { return structuredClone(this.pantryItems); }
   async groceries() { return structuredClone(this.groceryLines); }
   async addGrocery(line: GroceryLine) {
     const normalized = normalizedLine(line);
-    return this.withStateLock(() => {
-      const existing = this.groceryLines.find((entry) => groceryKey(entry) === groceryKey(normalized));
+    return this.withStateLock(async () => {
+      const candidate = this.snapshot();
+      const existing = candidate.groceryLines.find((entry) => groceryKey(entry) === groceryKey(normalized));
       if (existing) {
         const total = Math.round((existing.quantity + normalized.quantity) * 1000) / 1000;
         if (!Number.isFinite(total) || total > MAX_QUANTITY) throw new Error("Combined quantity is too large; the limit is 10000 per name and unit.");
         existing.quantity = total;
       } else {
-        if (this.groceryLines.length >= GROCERY_LINE_LIMIT) throw new Error(`The grocery list is limited to ${GROCERY_LINE_LIMIT} lines.`);
-        this.groceryLines.push(normalized);
+        if (candidate.groceryLines.length >= GROCERY_LINE_LIMIT) throw new Error(`The grocery list is limited to ${GROCERY_LINE_LIMIT} lines.`);
+        candidate.groceryLines.push(normalized);
       }
-      return structuredClone(this.groceryLines);
+      await this.commit(candidate);
+      return structuredClone(candidate.groceryLines);
     });
   }
   async ensureGroceries(lines: GroceryLine[]): Promise<EnsureGroceriesResult> {
-    return this.withStateLock(() => this.ensureGroceriesUnlocked(lines));
+    return this.withStateLock(async () => {
+      const candidate = this.snapshot();
+      const result = this.ensureGroceriesUnlocked(candidate, lines);
+      if (result.added.length) await this.commit(candidate);
+      return result;
+    });
   }
-  private ensureGroceriesUnlocked(lines: GroceryLine[]): EnsureGroceriesResult {
+  private ensureGroceriesUnlocked(candidate: HouseholdState, lines: GroceryLine[]): EnsureGroceriesResult {
     if (lines.length > GROCERY_LINE_LIMIT) throw new Error(`A grocery batch is limited to ${GROCERY_LINE_LIMIT} lines.`);
     const normalized = [...new Map(lines.map(normalizedLine).map((line) => [groceryKey(line), line])).values()];
-    const newCount = normalized.filter((line) => !this.groceryLines.some((entry) => groceryKey(entry) === groceryKey(line))).length;
-    if (this.groceryLines.length + newCount > GROCERY_LINE_LIMIT) throw new Error(`The grocery list is limited to ${GROCERY_LINE_LIMIT} lines.`);
+    const newCount = normalized.filter((line) => !candidate.groceryLines.some((entry) => groceryKey(entry) === groceryKey(line))).length;
+    if (candidate.groceryLines.length + newCount > GROCERY_LINE_LIMIT) throw new Error(`The grocery list is limited to ${GROCERY_LINE_LIMIT} lines.`);
     const added: GroceryLine[] = [];
     const alreadyListed: GroceryLine[] = [];
     // Validate the whole batch and capacity before the first mutation. No await
     // between checks and insertion; caller also owns the per-store state lock.
     for (const line of normalized) {
-      const existing = this.groceryLines.find((entry) => groceryKey(entry) === groceryKey(line));
+      const existing = candidate.groceryLines.find((entry) => groceryKey(entry) === groceryKey(line));
       if (existing) alreadyListed.push(existing);
-      else { this.groceryLines.push(line); added.push(line); }
+      else { candidate.groceryLines.push(line); added.push(line); }
     }
-    return structuredClone({ added, alreadyListed, list: this.groceryLines });
+    return structuredClone({ added, alreadyListed, list: candidate.groceryLines });
   }
   async restockForMeals(days: number, dryRun: boolean, expectedToken?: string): Promise<RestockResult> {
     if (!Number.isInteger(days) || days < 1 || days > 7) throw new Error("Meals to cover must be an integer from 1 to 7.");
@@ -194,7 +232,9 @@ export class MemoryStore implements HouseholdStore {
       if (!timingSafeEqual(Buffer.from(token, "hex"), Buffer.from(expectedToken, "hex"))) return structuredClone({ ...preview, previewChanged: true });
       // Snapshot validation and all-or-nothing insertion share this lock. Nothing
       // can interleave after the token check or bypass it on the MCP commit route.
-      const result = this.ensureGroceriesUnlocked([...wanted.values()].map((item) => ({ name: item.name, unit: item.unit, quantity: 1, addedBy: "restock (synthetic Household Brain)" })));
+      const candidate = this.snapshot();
+      const result = this.ensureGroceriesUnlocked(candidate, [...wanted.values()].map((item) => ({ name: item.name, unit: item.unit, quantity: 1, addedBy: "restock (synthetic Household Brain)" })));
+      if (result.added.length) await this.commit(candidate);
       return structuredClone({ ...preview, dryRun: false, added: result.added.map((line) => wanted.get(groceryKey(line))!), alreadyListed: result.alreadyListed.map((line) => wanted.get(groceryKey(line))!), writeApplied: result.added.length > 0 });
     });
   }
@@ -202,10 +242,12 @@ export class MemoryStore implements HouseholdStore {
   async chores() { return structuredClone(this.choreList); }
   async logChore(name: string) {
     const normalized = requireName(name, "Chore name");
-    return this.withStateLock(() => {
-      const matches = matchChores(this.choreList, normalized);
+    return this.withStateLock(async () => {
+      const candidate = this.snapshot();
+      const matches = matchChores(candidate.choreList, normalized);
       if (matches.length !== 1) return null;
       matches[0].done = true;
+      await this.commit(candidate);
       return structuredClone(matches[0]);
     });
   }

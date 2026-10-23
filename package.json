@@ -12,18 +12,20 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsc -w",
-    "test": "tsc && node --test dist/test/brief.test.js dist/test/household.test.js dist/test/http.test.js dist/test/server.test.js",
+    "test": "tsc && node --test dist/test/*.test.js",
     "demo": "npm run build && node scripts/demo.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.3"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.1156.0",
+    "@aws-sdk/credential-providers": "3.1156.0",
     "@modelcontextprotocol/sdk": "^1.32.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
   }
 }
