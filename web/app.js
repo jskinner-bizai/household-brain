@@ -21,15 +21,15 @@ function focusTarget(id, preventScroll = false) {
 }
 function setStage(stage) {
   document.body.dataset.stage = stage;
-  byId('preview-restock').textContent = stage === 'done' ? 'Check again' : 'Check what to add';
+  byId('preview-restock').textContent = stage === 'done' ? 'Check again' : 'Check ingredients';
   const primary = stage === 'start' ? 'connect' : stage === 'review' ? 'commit-restock' : 'preview-restock';
   for (const id of ['connect', 'preview-restock', 'commit-restock']) byId(id).classList.toggle('primary', id === primary);
   const help = byId('journey-help');
   if (help) help.textContent = {
-    start: 'Open the sample household to see the dinner plan and what is already on the list.',
+    start: 'See the meals, check the ingredients, then review what goes on your list.',
     check: 'Start with the meals below. Check what needs adding before changing the list.',
     review: 'Review each addition and its reason. The list changes only when you confirm.',
-    done: 'Your sample list is below. Check again any time; items already listed will not be added twice.',
+    done: 'Your list is updated. Check again any time; items already listed will not be added twice.',
   }[stage];
   for (const [number, current] of [[1, stage === 'start'], [2, stage === 'check' || stage === 'review'], [3, stage === 'done']]) {
     const step = byId(`journey-step-${number}`);
@@ -120,7 +120,7 @@ async function action(id, task, doneMessage, { focus = id } = {}) {
   };
   document.addEventListener('focusin', trackFocus);
   setBusy(true);
-  status('Checking the sample household…');
+  status('Checking the household.');
   try { const outcome = await task(); status(typeof outcome === 'string' ? outcome : doneMessage); }
   catch (error) { failed = true; showFailure(id, error); }
   finally {
@@ -140,18 +140,86 @@ function listItems(target, values, format) {
   values.forEach((value) => list.append(element('li', format(value))));
   target.append(list);
 }
+// Original code-native food illustrations. No photos, third-party assets or remote requests.
+function mealArtwork(name) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const shape = (tag, attrs) => {
+    const node = document.createElementNS(ns, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+    return node;
+  };
+  const svg = shape('svg', { viewBox: '0 0 280 170', 'aria-hidden': 'true', focusable: 'false' });
+  const add = (tag, attrs, parent = svg) => { const node = shape(tag, attrs); parent.append(node); return node; };
+  const type = name.toLowerCase().includes('salmon') ? 'salmon' : name.toLowerCase().includes('taco') ? 'tacos' : 'bowl';
+  add('rect', { width: 280, height: 170, rx: 18, fill: type === 'salmon' ? '#f3dfd3' : type === 'tacos' ? '#f1e6c9' : '#e3e9d9' });
+  add('ellipse', { cx: 142, cy: 127, rx: 104, ry: 25, fill: '#263e3020' });
+  add('ellipse', { cx: 140, cy: 91, rx: 108, ry: 65, fill: '#fffdf5', stroke: '#d9d4c3', 'stroke-width': 3 });
+  add('ellipse', { cx: 140, cy: 91, rx: 91, ry: 49, fill: '#f5f2e8' });
+  if (type === 'salmon') {
+    add('path', { d: 'M66 72 Q75 47 102 54 Q126 53 130 83 Q128 110 94 115 Q63 109 66 72Z', fill: '#fffdf8' });
+    for (const [x, y] of [[80, 72], [95, 66], [111, 76], [82, 94], [102, 98]]) add('path', { d: `M${x} ${y}l8 2`, stroke: '#dfd7bd', 'stroke-width': 2, 'stroke-linecap': 'round' });
+    add('path', { d: 'M113 63 Q132 48 166 58 L187 103 Q165 125 128 116 L110 82Z', fill: '#d9785d', stroke: '#b75b43', 'stroke-width': 2 });
+    for (const [x, y] of [[124, 68], [132, 83], [140, 99]]) add('path', { d: `M${x} ${y}q16 -5 32 3`, fill: 'none', stroke: '#f6b59a', 'stroke-width': 4, 'stroke-linecap': 'round' });
+    for (const [x, y] of [[190, 69], [208, 85], [199, 104]]) {
+      add('path', { d: `M${x} ${y+12}l-6 16`, stroke: '#69864c', 'stroke-width': 7, 'stroke-linecap': 'round' });
+      for (const [dx, dy] of [[-9, 0], [4, -6], [11, 5]]) add('circle', { cx: x+dx, cy: y+dy, r: 12, fill: dx < 0 ? '#3f6946' : '#5b7f46' });
+    }
+    add('path', { d: 'M86 46 Q99 28 115 45 L101 58Z', fill: '#edce65', stroke: '#c7ac49', 'stroke-width': 2 });
+  } else if (type === 'tacos') {
+    for (const [x, y, angle] of [[83, 62, -13], [150, 75, 12]]) {
+      const taco = add('g', { transform: `translate(${x} ${y}) rotate(${angle})` });
+      add('path', { d: 'M-20 31 Q-21 -25 34 -26 Q81 -23 82 32Z', fill: '#dfb55e', stroke: '#b98d3f', 'stroke-width': 3 }, taco);
+      add('path', { d: 'M-12 24 Q-6 -11 32 -14 Q66 -12 74 24Z', fill: '#698248' }, taco);
+      for (const [bx, by] of [[3, 11], [19, -2], [34, 9], [52, 0], [65, 15]]) add('ellipse', { cx: bx, cy: by, rx: 8, ry: 6, fill: '#47372f', transform: `rotate(-20 ${bx} ${by})` }, taco);
+      add('path', { d: 'M-12 23 Q25 -2 74 24 L66 42 Q21 49 -12 23Z', fill: '#efd08b', stroke: '#c49c50', 'stroke-width': 2 }, taco);
+      add('path', { d: 'M9 11l15 4m15 -13l12 8', stroke: '#b86263', 'stroke-width': 4, 'stroke-linecap': 'round' }, taco);
+    }
+    add('path', { d: 'M201 117 L224 96 Q239 117 216 132Z', fill: '#8eab50', stroke: '#68823c', 'stroke-width': 2 });
+    add('path', { d: 'M207 116l15 -13m-11 18l15 -10', stroke: '#dce6ad', 'stroke-width': 2 });
+  } else {
+    add('path', { d: 'M69 75 Q140 112 212 75 L195 118 Q140 149 86 118Z', fill: '#668875', stroke: '#3e6354', 'stroke-width': 3 });
+    add('ellipse', { cx: 140, cy: 75, rx: 72, ry: 31, fill: '#f0d493', stroke: '#3e6354', 'stroke-width': 3 });
+    for (const [x, y, color] of [[98, 69, '#b9684b'], [124, 82, '#5f8049'], [157, 64, '#cf8b54'], [179, 82, '#64864a']]) add('ellipse', { cx: x, cy: y, rx: 16, ry: 10, fill: color });
+    add('path', { d: 'M118 44q-8 -9 0 -18m28 16q-8 -9 0 -18m27 23q-8 -9 0 -18', fill: 'none', stroke: '#a6b4a4', 'stroke-width': 3, 'stroke-linecap': 'round' });
+  }
+  return svg;
+}
 function renderMeals() {
   const target = byId('dinner');
+  const open = new Set([...target.querySelectorAll('details[open]')].map((node) => node.dataset.mealKey));
+  const focused = target.contains(document.activeElement) ? document.activeElement.closest('details')?.dataset.mealKey : null;
   target.replaceChildren();
   const meals = state.mealPlan.slice(0, Number(byId('days').value));
-  if (!meals.length) { target.append(element('p', 'No meals planned in this sample.')); return; }
+  if (!meals.length) { target.append(element('p', 'No meals planned yet.')); return; }
   const list = element('ul', undefined, 'meal-list');
   for (const meal of meals) {
-    const row = element('li', undefined, 'meal-row');
-    row.append(element('span', meal.day, 'meal-day'), element('strong', meal.meal, 'meal-name'));
+    const row = element('li', undefined, 'meal-row meal-card');
+    const visual = element('div', undefined, 'meal-art'); visual.append(mealArtwork(meal.meal));
+    const body = element('div', undefined, 'meal-card-body');
+    body.append(element('span', meal.day, 'meal-day'), element('strong', meal.meal, 'meal-name'));
+    if (Number.isInteger(meal.servings) && meal.servings > 0) body.append(element('p', `${meal.servings} servings planned`, 'meal-servings'));
+    const details = element('details', undefined, 'meal-check-details');
+    details.dataset.mealKey = JSON.stringify([meal.day, meal.meal]); details.open = open.has(details.dataset.mealKey);
+    const toggle = element('summary', 'Ingredients checked');
+    toggle.setAttribute('aria-label', `Ingredients checked for ${meal.meal}`);
+    details.append(toggle);
+    const ingredients = Array.isArray(meal.missingIngredients) ? meal.missingIngredients : [];
+    if (ingredients.length) {
+      const checked = element('ul'); ingredients.forEach((name) => checked.append(element('li', name))); details.append(checked);
+      details.append(element('p', "This checks the listed ingredients only, not a complete recipe. Cooking amounts aren't calculated."));
+      body.append(details);
+    } else {
+      row.classList.add('meal-card--no-checks');
+      body.append(element('p', 'No additional ingredients tracked.', 'meal-checked-note'));
+    }
+    row.append(visual, body);
     list.append(row);
   }
   target.append(list);
+  if (focused) {
+    const restored = [...target.querySelectorAll('details')].find((node) => node.dataset.mealKey === focused);
+    restored?.querySelector('summary').focus({ preventScroll: true });
+  }
 }
 function renderSummary(summary) {
   renderMeals();
@@ -165,7 +233,7 @@ function renderSummary(summary) {
       row.append(element('span', line.name, 'grocery-name'), element('span', `${line.quantity} ${line.unit}`, 'grocery-quantity'));
       list.append(row);
     }
-    target.append(groceries.length ? list : element('p', 'Your sample list is empty. Check the meal plan to get started.'));
+    target.append(groceries.length ? list : element('p', 'Your list is empty. Check the meal plan to get started.'));
     const count = byId('grocery-count');
     if (count) count.textContent = `${groceries.length} item${groceries.length === 1 ? '' : 's'}`;
   }
@@ -245,7 +313,7 @@ function renderPreview(result, days, changed = false) {
   const target = byId('preview'); target.replaceChildren();
   if (changed) target.append(element('p', 'The household changed since your preview. Nothing was added. Review this updated list, then confirm it.', 'changed-notice'));
   const additions = content.added ?? [];
-  target.append(element('h3', additions.length ? `${additions.length} things to add to your list` : 'Nothing new to add'));
+  target.append(element('h3', additions.length ? `${additions.length} items to review` : 'Nothing new to add'));
   if (!additions.length) target.append(element('p', 'The checked ingredients are on hand or already listed. This check does not calculate quantities for servings.'));
   const groups = new Map();
   for (const item of additions) {
@@ -259,7 +327,7 @@ function renderPreview(result, days, changed = false) {
     const list = element('ul', undefined, 'preview-items');
     for (const item of items) {
       const line = element('li', undefined, 'preview-item');
-      line.append(element('strong', item.name, 'preview-item-name'), element('span', `1 ${item.unit}`, 'preview-item-meta'));
+      line.append(element('strong', item.name, 'preview-item-name'), element('span', `Add 1 ${item.unit}`, 'preview-item-meta'));
       list.append(line);
     }
     target.append(list);
@@ -270,7 +338,7 @@ function renderPreview(result, days, changed = false) {
     target.append(element('p', `${conflict.name} is already listed as ${listed}; this checklist adds 1 ${conflict.requestedUnit}. Units are not converted.`, 'unit-notice'));
   }
   target.append(element('p', additions.length ? 'Nothing has been added yet. Add these items only if the list looks right.' : 'No change is needed from this check.', 'preview-footnote'));
-  byId('commit-restock').textContent = changed ? `Confirm ${additions.length} updated item${additions.length === 1 ? '' : 's'}` : `Add ${additions.length} item${additions.length === 1 ? '' : 's'} to sample list`;
+  byId('commit-restock').textContent = changed ? `Confirm ${additions.length} updated item${additions.length === 1 ? '' : 's'}` : `Add ${additions.length} item${additions.length === 1 ? '' : 's'} to your list`;
   state.preview = { days, token: content.previewToken, count: additions.length, keys: additions.map(itemKey) };
   setStage(additions.length ? 'review' : 'done');
 }
@@ -305,11 +373,9 @@ function showPlannerScope(config) {
   }
   const persistent = config.persistentState === true;
   state.persistentState = persistent;
-  if (persistent || state.planner) {
-    byId('scope-summary').textContent = `Fictional household data. ${persistent ? 'Confirmed changes are saved locally across restarts.' : 'Changes reset when the server restarts.'} No purchases or connected household accounts.`;
-    byId('scope-detail').textContent = `This loopback prototype has no authentication and must not be publicly exposed. ${persistent ? 'A bounded local snapshot stores confirmed sample changes; previews must be reviewed again after a restart.' : 'Household changes live in memory only.'} ${state.planner?.mode === 'bedrock' ? 'The optional planner sends fictional fixtures to Amazon Bedrock in Ohio; it cannot commit changes.' : state.planner ? 'The optional planner uses a deterministic mock model; it makes no AWS calls.' : 'No LLM or AWS service is connected.'} Preview tokens detect changes; they are not authentication. No native Alexa, devices, live household sources or purchases are connected.`;
-    byId('integration-disclosure').textContent = `Household Brain is a self-hosted MCP prototype for the Alexa+ track. ${state.planner?.mode === 'bedrock' ? 'Optional Bedrock tool orchestration is enabled.' : state.planner ? 'Mock orchestration is enabled; no live AWS inference.' : 'The optional planner is disabled.'} Native Alexa is not connected. Requests are never retried automatically. This sample list does not replenish the pantry.`;
-  }
+  byId('scope-summary').textContent = 'Demo household • fictional data';
+  byId('scope-detail').textContent = `${persistent ? 'Confirmed changes are saved locally across restarts. Previews must be reviewed again after a restart.' : 'Household changes live in memory and reset when the server restarts.'} No purchases or connected household accounts. ${state.planner?.mode === 'bedrock' ? 'The optional planner sends fictional fixtures to Amazon Bedrock in Ohio; it cannot commit changes.' : state.planner ? 'The optional planner uses a deterministic mock model; no AWS calls or model inference.' : 'No LLM or AWS service is connected.'} This loopback prototype has no authentication and must not be publicly exposed. Preview tokens detect changes; they are not authentication. No native Alexa, devices or live household source is connected.`;
+  byId('integration-disclosure').textContent = `Household Brain is a self-hosted MCP prototype for the Alexa+ track. ${state.planner?.mode === 'bedrock' ? 'Optional Bedrock tool orchestration is enabled.' : state.planner ? 'Mock orchestration is enabled; no live AWS inference.' : 'The optional planner is disabled.'} Native Alexa is not connected. Requests are never retried automatically. Adding to the list does not replenish the pantry.`;
 }
 function renderPlannerEvidence(result) {
   byId('planner-section').classList.add('has-proposal');
@@ -317,8 +383,13 @@ function renderPlannerEvidence(result) {
     ? 'Bedrock proposal. Planner made no changes.'
     : 'Mock proposal, no inference or AWS calls. Planner made no changes.';
   const target = byId('planner-result'); target.replaceChildren();
+  const explanation = typeof result.explanation === 'string' ? result.explanation.trim() : '';
+  const excerpt = explanation.length > 300 ? `${explanation.slice(0, 300).replace(/\s+\S*$/u, '')}…` : explanation;
+  if (excerpt) target.append(element('p', excerpt, 'planner-explanation'));
+  const readTools = [...new Set((result.trace ?? []).map((entry) => entry.tool ?? entry.name).filter((name) => typeof name === 'string'))];
+  if (readTools.length) target.append(element('p', 'Read the meal plan and pantry, then checked the additions. You make the final change.', 'planner-trace-summary'));
   const details = element('details');
-  details.append(element('summary', 'Planner explanation and tool activity'));
+  details.append(element('summary', 'Full planner explanation and tool activity'));
   details.append(element('p', result.mode === 'bedrock' ? 'Bedrock planner finished. Nothing was added.' : 'Mock planner finished. No AWS call was made. Nothing was added.', 'result-title'));
   details.append(element('p', result.explanation), element('pre', JSON.stringify({ mode: result.mode, trace: result.trace, receipt: result.receipt }, null, 2)));
   target.append(details);
@@ -366,9 +437,10 @@ byId('connect').addEventListener('click', () => action('restock-result', async (
   renderTopics(preferences); renderTools(state.tools);
   await refreshHousehold();
   state.connected = true;
-  byId('connection-state').textContent = 'Sample household is open';
+  byId('connection-state').textContent = 'Household is open';
   byId('connect').textContent = 'Household open';
-  byId('connection-help').textContent = 'The plan and list below come from the same local household.';
+  byId('connect').hidden = true;
+  byId('connection-help').textContent = state.persistentState ? 'Your list is saved locally.' : 'Changes reset after a restart.';
   setStage('check');
   await restorePlannerPreview();
 }, 'Here is the dinner plan. Check what needs adding when you are ready.', { focus: 'preview-restock' }));
@@ -410,7 +482,7 @@ byId('preview-restock').addEventListener('click', () => action('restock-result',
   byId('restock-result').classList.remove('error', 'success-summary');
   renderPreview(result, days);
   technicalReceipt('restock-result', result);
-}, 'Check complete. Review the items and their reasons before adding.', { focus: 'preview' }));
+}, 'Ready to review.', { focus: 'preview' }));
 byId('commit-restock').addEventListener('click', () => {
   if (!state.preview || state.preview.days !== Number(byId('days').value)) return;
   const { days, token, keys: previousKeys = [] } = state.preview; state.preview = null;
@@ -437,10 +509,10 @@ byId('commit-restock').addEventListener('click', () => {
     requireSuccess(result);
     const added = (content.added ?? []).length;
     const names = (content.added ?? []).map((item) => item.name);
-    showResult('restock-result', result, `${added} item${added === 1 ? '' : 's'} added to the sample list`, `${names.length ? `Added ${joinNames(names)}. ` : ''}Nothing was purchased and pantry stock has not changed.`);
+    showResult('restock-result', result, `${added} item${added === 1 ? '' : 's'} added to your list`, `${names.length ? `Added ${joinNames(names)}. ` : ''}Nothing was purchased and pantry stock has not changed.`);
     byId('restock-result').classList.add('success-summary');
-    byId('commit-restock').textContent = 'Added to sample list';
-    byId('preview').replaceChildren(element('p', `Added to this sample list. ${state.persistentState ? 'Confirmed changes are saved locally across restarts.' : 'It resets when the server restarts.'} Check again to see whether anything else needs adding.`));
+    byId('commit-restock').textContent = 'Added to your list';
+    byId('preview').replaceChildren(element('p', `Added to your list. ${state.persistentState ? 'Confirmed changes are saved locally across restarts.' : 'It resets when the server restarts.'} Check again to see whether anything else needs adding.`));
     const refreshed = await refreshAfterWrite('restock-result');
     setStage(refreshed ? 'done' : 'check');
     return refreshed ? `${(content.added ?? []).length} items added. The list and brief are refreshed.` : `${(content.added ?? []).length} items added, but the updated list could not be loaded. Reload the household to see it. Nothing will be added again automatically.`;

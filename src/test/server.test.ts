@@ -2,9 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import { once } from "node:events";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm, rmdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createServer as createTcpServer } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createDemoHttpServer } from "../server.js";
+import { MemoryStore } from "../store.js";
 
 const headers = { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-11-25" };
 const initialize = { jsonrpc: "2.0", id: 1, method: "initialize", params: {
@@ -183,7 +190,7 @@ test("malformed hosts and numeric loopback aliases are refused before MCP dispat
 });
 
 test("custom MCP endpoint is advertised and cannot shadow static, health or config routes", async t => {
-  for (const endpoint of ["/", "/app.js", "/styles.css", "/healthz", "/demo-config.json", "//mcp", "/a/../mcp", "/mcp?x", "/mcp#x", "/mcp\\path", "mcp"]) {
+  for (const endpoint of ["/", "/app.js", "/styles.css", "/assets/household-brain-lockup-light.svg", "/assets/household-brain-favicon.svg", "/healthz", "/demo-config.json", "//mcp", "/a/../mcp", "/mcp?x", "/mcp#x", "/mcp\\path", "mcp"]) {
     assert.throws(() => createDemoHttpServer({ endpoint }), /MCP_ENDPOINT/, endpoint);
   }
   const { base, post } = await start(t, { endpoint: "/custom/mcp" });
@@ -193,9 +200,9 @@ test("custom MCP endpoint is advertised and cannot shadow static, health or conf
   const missing = await fetch(`${base}/mcp`); assert.equal(missing.status, 404); await missing.text();
 });
 
-test("only the three explicit GET assets are served with restrictive content headers", async t => {
+test("only explicit GET assets are served with restrictive content headers", async t => {
   const { base, url } = await start(t);
-  for (const [path, type] of [["/", "text/html"], ["/app.js", "text/javascript"], ["/styles.css", "text/css"]]) {
+  for (const [path, type] of [["/", "text/html"], ["/app.js", "text/javascript"], ["/styles.css", "text/css"], ["/assets/household-brain-lockup-light.svg", "image/svg\\+xml"], ["/assets/household-brain-favicon.svg", "image/svg\\+xml"]]) {
     const response = await fetch(base + path);
     assert.equal(response.status, 200, path); assert.ok((await response.text()).length > 0);
     assert.match(response.headers.get("content-type") ?? "", new RegExp(type));
@@ -207,7 +214,7 @@ test("only the three explicit GET assets are served with restrictive content hea
     const wrongMethod = await fetch(base + path, { method: "POST" });
     assert.equal(wrongMethod.status, 405); assert.equal(wrongMethod.headers.get("allow"), "GET"); await wrongMethod.text();
   }
-  for (const path of ["/package.json", "/src/server.ts", "/web/app.js", "/.git/config", "/index.html"]) {
+  for (const path of ["/package.json", "/src/server.ts", "/web/app.js", "/.git/config", "/index.html", "/assets/", "/assets/README.md", "/assets/BricolageGrotesque-OFL.txt", "/assets/not-allowed.svg"]) {
     const response = await fetch(base + path); assert.equal(response.status, 404, path); await response.text();
   }
   const host = new URL(base).host;
@@ -217,4 +224,95 @@ test("only the three explicit GET assets are served with restrictive content hea
   for (const path of ["/healthz", "/demo-config.json"]) {
     const response = await fetch(base + path, { method: "POST" }); assert.equal(response.status, 405); await response.text();
   }
+});
+
+async function rejectedStartup(statePath: string, settings: { PORT?: string; MCP_ENDPOINT?: string; ALLOWED_ORIGINS?: string } = {}) {
+  return new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((resolve, reject) => {
+    // No AWS environment, profiles or approval flags are inherited by this process.
+    const child = spawn(process.execPath, [fileURLToPath(new URL("../server.js", import.meta.url))], {
+      env: { NODE_ENV: "startup-check", PORT: "0", ...settings, HOUSEHOLD_PLANNER_MODE: "off", HOUSEHOLD_STATE_FILE: statePath,
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) },
+      stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
+    });
+    let stdout = "", stderr = "";
+    child.stdout.setEncoding("utf8").on("data", chunk => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", chunk => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
+
+test("corrupt snapshot startup fails concisely without exposing or resetting the saved household", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "household-startup-"));
+  const path = join(directory, "private-snapshot-path.snapshot.json");
+  t.after(async () => { await rm(path, { force: true }); await rm(`${path}.lock`, { force: true }); await rmdir(directory); });
+  const bytes = Buffer.from('{"private":"DO_NOT_PRINT_CORRUPT_DETAIL",');
+  await writeFile(path, bytes);
+  const result = await rejectedStartup(path);
+  assert.equal(result.code, 1); assert.equal(result.signal, null); assert.equal(result.stdout, "");
+  assert.match(result.stderr, /could not open its saved household/);
+  assert.match(result.stderr, /HOUSEHOLD_STATE_FILE/);
+  assert.doesNotMatch(result.stderr, /DO_NOT_PRINT|private-snapshot-path|Error:|node:internal|file:\/\//);
+  assert.ok(!result.stderr.includes(directory));
+  assert.equal(result.stderr.trim().split(/\r?\n/).length, 1);
+  assert.deepEqual(await readFile(path), bytes);
+  assert.deepEqual(await readdir(directory), ["private-snapshot-path.snapshot.json"]);
+});
+
+test("stale lock startup stays nonzero and preserves the unknown lock and snapshot", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "household-startup-"));
+  const path = join(directory, "private-locked-path.snapshot.json");
+  t.after(async () => { await rm(path, { force: true }); await rm(`${path}.lock`, { force: true }); await rmdir(directory); });
+  const snapshot = Buffer.from('{"private":"DO_NOT_PRINT_SNAPSHOT_DETAIL"}');
+  const lock = Buffer.from("another-writer:DO_NOT_PRINT_LOCK_DETAIL\n");
+  await writeFile(path, snapshot); await writeFile(`${path}.lock`, lock);
+  const result = await rejectedStartup(path);
+  assert.equal(result.code, 1); assert.equal(result.signal, null); assert.equal(result.stdout, "");
+  assert.match(result.stderr, /inspect the owning process before recovering/);
+  assert.doesNotMatch(result.stderr, /DO_NOT_PRINT|private-locked-path|Error:|node:internal|file:\/\//);
+  assert.ok(!result.stderr.includes(directory));
+  assert.equal(result.stderr.trim().split(/\r?\n/).length, 1);
+  assert.deepEqual(await readFile(path), snapshot);
+  assert.deepEqual(await readFile(`${path}.lock`), lock);
+});
+
+async function savedHouseholdFixture(t: { after(fn: () => Promise<void>): void }) {
+  const directory = await mkdtemp(join(tmpdir(), "household-startup-"));
+  const path = join(directory, "private-saved-household.snapshot.json");
+  t.after(async () => { await rm(path, { force: true }); await rm(`${path}.lock`, { force: true }); await rmdir(directory); });
+  const bytes = Buffer.from(JSON.stringify({ version: 1, syntheticDemo: true, state: new MemoryStore().snapshot() }) + "\n");
+  await writeFile(path, bytes);
+  return { directory, path, bytes };
+}
+
+async function assertOwnedStartupFailure(fixture: { directory: string; path: string; bytes: Buffer }, settings: { PORT?: string; MCP_ENDPOINT?: string; ALLOWED_ORIGINS?: string }) {
+  const result = await rejectedStartup(fixture.path, settings);
+  assert.equal(result.code, 1); assert.equal(result.signal, null); assert.equal(result.stdout, "");
+  assert.match(result.stderr, /could not start/);
+  assert.match(result.stderr, /PORT, MCP_ENDPOINT and ALLOWED_ORIGINS/);
+  assert.doesNotMatch(result.stderr, /DO_NOT_PRINT|private-saved-household|Error:|node:internal|file:\/\//);
+  assert.ok(!result.stderr.includes(fixture.directory));
+  assert.equal(result.stderr.trim().split(/\r?\n/).length, 1);
+  assert.deepEqual(await readFile(fixture.path), fixture.bytes);
+  assert.deepEqual(await readdir(fixture.directory), ["private-saved-household.snapshot.json"]);
+}
+
+test("invalid MCP endpoint after opening saved state releases only its owned lock", async t => {
+  const fixture = await savedHouseholdFixture(t);
+  await assertOwnedStartupFailure(fixture, { MCP_ENDPOINT: "/mcp?DO_NOT_PRINT_ENDPOINT" });
+});
+
+test("invalid allowed origin after opening saved state releases only its owned lock", async t => {
+  const fixture = await savedHouseholdFixture(t);
+  await assertOwnedStartupFailure(fixture, { ALLOWED_ORIGINS: "https://example.invalid/DO_NOT_PRINT_ORIGIN" });
+});
+
+test("occupied port startup is nonzero, preserves saved state and releases its owned lock", async t => {
+  const fixture = await savedHouseholdFixture(t);
+  const occupied = createTcpServer();
+  occupied.listen(0, "127.0.0.1"); await once(occupied, "listening");
+  t.after(() => new Promise<void>(resolve => occupied.close(() => resolve())));
+  const address = occupied.address(); assert.ok(address && typeof address === "object");
+  await assertOwnedStartupFailure(fixture, { PORT: String(address.port) });
+  assert.equal(occupied.listening, true);
 });

@@ -13,6 +13,7 @@ import { registerHouseholdTools } from "./tools/household.js";
 
 import { HouseholdStore, MemoryStore } from "./store.js";
 import { HouseholdPlanner, PlannerError, type PlannerModel, type PlannerResult, type PlannerProgress } from "./planner.js";
+import type { FileStore } from "./file-store.js";
 
 const defaultStore: HouseholdStore = new MemoryStore();
 
@@ -57,6 +58,8 @@ const webAssets = new Map([
   ["/", { name: "index.html", type: "text/html; charset=utf-8" }],
   ["/app.js", { name: "app.js", type: "text/javascript; charset=utf-8" }],
   ["/styles.css", { name: "styles.css", type: "text/css; charset=utf-8" }],
+  ["/assets/household-brain-lockup-light.svg", { name: "assets/household-brain-lockup-light.svg", type: "image/svg+xml" }],
+  ["/assets/household-brain-favicon.svg", { name: "assets/household-brain-favicon.svg", type: "image/svg+xml" }],
 ]);
 const reservedPaths = new Set([...webAssets.keys(), "/healthz", "/demo-config.json", "/planner/preview", "/planner/result"]);
 const webRoot = new URL("../web/", import.meta.url);
@@ -249,7 +252,7 @@ export function createDemoHttpServer(options: DemoServerOptions = {}) {
   return httpServer;
 }
 
-if (process.env.NODE_ENV !== "test" && process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+async function startLocalDemo() {
   const port = Number(process.env.PORT ?? 8099);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid PORT");
   const endpoint = process.env.MCP_ENDPOINT ?? "/mcp";
@@ -259,26 +262,63 @@ if (process.env.NODE_ENV !== "test" && process.argv[1] && resolve(process.argv[1
     throw new Error("Live mode requires explicit demo approval and a durable HOUSEHOLD_AWS_DEMO_RECEIPT path. No AWS request was made.");
   }
   const persistent = process.env.HOUSEHOLD_STATE_FILE;
-  const fileStore = persistent ? await (await import("./file-store.js")).FileStore.open(resolve(persistent)) : undefined;
-  let plannerConfig: DemoServerOptions["planner"];
-  if (mode === "mock") plannerConfig = { model: (await import("./mock-model.js")).createMockModel(), mode };
-  if (mode === "bedrock") {
-    const { reserveDemoRun, createDemoJournal } = await import("./demo-lease.js");
-    plannerConfig = {
-      model: (await import("./bedrock.js")).createBedrockModel(), mode,
-      beforeRun: () => reserveDemoRun(process.env.HOUSEHOLD_AWS_DEMO_RECEIPT!),
-      onProgress: createDemoJournal(process.env.HOUSEHOLD_AWS_DEMO_RECEIPT!),
-    };
+  let fileStore: FileStore | undefined;
+  if (persistent) {
+    try {
+      fileStore = await (await import("./file-store.js")).FileStore.open(resolve(persistent));
+    } catch {
+      // Keep paths, snapshot contents and raw filesystem errors out of startup output.
+      // FileStore retains its existing validation and owned-lock cleanup behavior.
+      console.error("Household Brain could not open its saved household. Check HOUSEHOLD_STATE_FILE and the snapshot. If a writer lock exists, inspect the owning process before recovering it. Existing data was not reset.");
+      process.exitCode = 1;
+      return;
+    }
   }
-  const httpServer = createDemoHttpServer({ endpoint, store: fileStore, persistentState: Boolean(fileStore), planner: plannerConfig,
-    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean) });
-  httpServer.listen(port, "127.0.0.1", () => {
-    const address = httpServer.address();
+  let httpServer: ReturnType<typeof createDemoHttpServer> | undefined;
+  try {
+    let plannerConfig: DemoServerOptions["planner"];
+    if (mode === "mock") plannerConfig = { model: (await import("./mock-model.js")).createMockModel(), mode };
+    if (mode === "bedrock") {
+      const { reserveDemoRun, createDemoJournal } = await import("./demo-lease.js");
+      plannerConfig = {
+        model: (await import("./bedrock.js")).createBedrockModel(), mode,
+        beforeRun: () => reserveDemoRun(process.env.HOUSEHOLD_AWS_DEMO_RECEIPT!),
+        onProgress: createDemoJournal(process.env.HOUSEHOLD_AWS_DEMO_RECEIPT!),
+      };
+    }
+    const server = createDemoHttpServer({ endpoint, store: fileStore, persistentState: Boolean(fileStore), planner: plannerConfig,
+      allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean) });
+    httpServer = server;
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => { server.off("listening", onListening); reject(error); };
+      const onListening = () => { server.off("error", onError); resolve(); };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      try { server.listen(port, "127.0.0.1"); }
+      catch (error) { server.off("error", onError); server.off("listening", onListening); reject(error); }
+    });
+    const address = server.address();
     const demoBase = `http://127.0.0.1:${typeof address === "object" ? address?.port : port}`;
     console.log(`Synthetic Household Brain demo listening on ${demoBase}/`);
     console.log(`Guided web client: ${demoBase}/ | MCP endpoint: ${demoBase}${endpoint}`);
-  });
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.on(signal, () => { httpServer.closeAllConnections(); httpServer.close(() => { void fileStore?.close().finally(() => process.exit(0)); if (!fileStore) process.exit(0); }); });
+    for (const signal of ["SIGTERM", "SIGINT"] as const) {
+      process.on(signal, () => { server.closeAllConnections(); server.close(() => { void fileStore?.close().finally(() => process.exit(0)); if (!fileStore) process.exit(0); }); });
+    }
+  } catch {
+    if (httpServer) {
+      try {
+        httpServer.closeAllConnections();
+        await new Promise<void>(resolve => httpServer!.close(() => resolve()));
+      } catch { /* Continue to release our own store even if server cleanup fails. */ }
+    }
+    // Only FileStore.close may release this instance's token-verified writer lock.
+    // A replaced/foreign lock is preserved; never reset state or unlink it here.
+    try { await fileStore?.close(); } catch { /* Leave unverified locks for inspection. */ }
+    console.error("Household Brain could not start. Check PORT, MCP_ENDPOINT and ALLOWED_ORIGINS. Inspect the saved-household writer before recovering any remaining lock. Existing data was not reset.");
+    process.exitCode = 1;
   }
+}
+
+if (process.env.NODE_ENV !== "test" && process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await startLocalDemo();
 }

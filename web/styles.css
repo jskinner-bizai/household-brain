@@ -300,3 +300,100 @@ footer { padding: 6px 0 32px; max-width: 830px; color: #5f6d56; font-size: .73re
 .planner-section.has-proposal #planner-intro,
 .planner-section.has-proposal #run-planner { display: none; }
 .planner-section.has-proposal #planner-mode { margin: 0; font-size: .875rem; }
+
+/* Meal-first layout. Artwork is original inline SVG; all meal data comes from MCP. */
+:root { --forest: #173c34; --ink: #0d2622; --oat: #f4efdf; --citrus: #cfe98a; --coral: #f2856d; --paper: #fffdf7; --green: var(--forest); color: var(--ink); background: var(--oat); }
+.brand { font-size: 1.16rem; letter-spacing: -.035em; }
+.brand-logo-slot:empty { display: none; }
+.brand-logo-slot img { display: block; width: 280px; height: auto; }
+.page-header { padding-block: 16px 8px; }
+.local-tag { border: 0; border-radius: 0; font-size: .67rem; font-weight: 700; letter-spacing: .12em; }
+.hero { padding-block: 20px 20px; max-width: 920px; }
+h1 { font-size: clamp(2rem, 4.3vw, 3.6rem); margin-bottom: 12px; letter-spacing: -.045em; }
+.intro { font-size: 1rem; line-height: 1.5; }
+.hero .eyebrow { margin-bottom: 8px; color: var(--forest); }
+.hero .eyebrow::before { content: ''; display: inline-block; width: 20px; height: 4px; margin-right: 9px; vertical-align: middle; background: var(--coral); }
+.step-tag { background: var(--citrus); color: var(--forest); }
+.notice { border-radius: 10px; padding: 7px 12px; font-size: .8rem; }
+.connection { padding-block: 14px 6px; }
+.status { margin-bottom: 12px; }
+.journey-nav { margin-bottom: 14px; }
+.journey-grid { grid-template-columns: minmax(0, 1.2fr) minmax(0, .9fr); gap: 20px; }
+.meal-context { grid-column: 1 / -1; background: #f1f0e5; padding: 22px; }
+.meal-context .section-heading { align-items: center; }
+.meal-plan { margin-top: 16px; }
+.meal-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.meal-card, .meal-card + .meal-card { display: grid; grid-template-columns: minmax(130px, .9fr) minmax(0, 1.2fr); gap: 0; padding: 0; border: 1px solid #d5dccd; border-radius: 14px; background: #fffdf7; overflow: hidden; min-width: 0; }
+.meal-art { display: grid; align-items: center; min-width: 0; background: #f2e8dc; }
+.meal-art svg { display: block; width: 100%; height: auto; }
+.meal-card-body { min-width: 0; padding: 16px; }
+.meal-day { display: inline-block; color: #8d4a33; font-size: .73rem; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; }
+.meal-name { font-size: 1.38rem; line-height: 1.19; text-wrap: pretty; }
+.meal-name::first-letter { text-transform: uppercase; }
+.meal-servings { font: 600 .8rem/1.45 system-ui, sans-serif; color: #68715e; margin: 9px 0 0; }
+.meal-check-details { margin-top: 8px; }
+.meal-check-details > summary { font-size: .8rem; padding-block: 8px; color: #365a43; }
+.meal-check-details ul { padding-left: 18px; margin: 0 0 8px; }
+.meal-check-details li, .meal-check-details p { font-size: .84rem; line-height: 1.5; }
+.meal-check-details p { color: #5b6558; margin: 0; }
+.meal-checked-note { font-size: .8rem; line-height: 1.4; color: #5b6558; margin: 8px 0 0; }
+.pantry-context { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding-top: 13px; margin-top: 15px; }
+.pantry-context h3 { margin: 0; font-size: .84rem; }
+#low-pantry li { font-size: .8rem; }
+.meal-details { margin-top: 10px; padding-top: 3px; }
+.restock, .groceries-card { margin-bottom: 0; }
+.groceries-card .section-heading { flex-direction: column; gap: 10px; }
+.groceries-card .list-note { text-align: left; }
+.groceries-card .list-note br { display: none; }
+#grocery-list ul { grid-template-columns: minmax(0, 1fr); }
+.count-badge { display: inline-block; min-width: 0; padding: 4px 8px; font-size: .8rem; line-height: 1.4; letter-spacing: .01em; word-spacing: .2em; white-space: nowrap; }
+.quantity-note { font-size: .875rem; color: #655332; background: #f7f0df; border-radius: 8px; padding: 10px 12px; line-height: 1.5; }
+.planner-explanation { margin-bottom: 8px; font-size: .9rem; line-height: 1.5; }
+.planner-trace-summary { font-size: .82rem; line-height: 1.5; color: #53664e; }
+.more-household { margin-top: 24px; }
+@media (max-width: 760px) {
+  .page-header { gap: 12px; padding-block: 13px 5px; }
+  .brand { font-size: 1rem; }
+  .brand-logo-slot img { width: 240px; }
+  .local-tag { display: none; }
+  .hero { padding-block: 15px 16px; }
+  h1 { font-size: 2rem; line-height: 1.06; }
+  .intro { font-size: .92rem; line-height: 1.45; }
+  .eyebrow { font-size: .62rem; }
+  .notice { font-size: .76rem; }
+  .connection { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+  .connection-copy p { font-size: .77rem; line-height: 1.4; margin-top: 3px; }
+  .connection strong { font-size: .84rem; }
+  .connection .button-row { width: auto; margin: 0; display: block; }
+  .connection .quiet-button { padding-inline: 5px; font-size: .76rem; }
+  .journey-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .card, .meal-context { padding: 17px; border-radius: 14px; }
+  .meal-context .step-tag { display: none; }
+  .meal-plan { margin-top: 13px; }
+  .meal-list { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .meal-card, .meal-card + .meal-card { grid-template-columns: 88px minmax(0, 1fr); border-radius: 10px; }
+  .meal-art { align-items: start; padding-top: 12px; }
+  .meal-art svg { min-height: 64px; }
+  .meal-card-body { padding: 11px 11px 7px; }
+  .meal-name { font-size: 1.12rem; line-height: 1.15; }
+  .meal-day { font-size: .65rem; margin-bottom: 3px; }
+  .meal-servings { margin-top: 5px; font-size: .76rem; }
+  .meal-check-details { margin-top: 3px; }
+  .meal-check-details > summary { font-size: .75rem; min-height: 44px; padding-block: 11px; }
+  .meal-check-details li, .meal-check-details p { font-size: .8rem; }
+  .meal-card--no-checks, .meal-card--no-checks + .meal-card { grid-template-columns: 62px minmax(0, 1fr); }
+  .meal-card--no-checks .meal-art { padding-top: 8px; }
+  .meal-card--no-checks .meal-art svg { min-height: 0; }
+  .meal-card--no-checks .meal-card-body { padding-block: 8px; }
+  .meal-card--no-checks .meal-name { font-size: 1rem; }
+  .meal-card--no-checks .meal-day { display: inline; margin-right: 5px; }
+  .meal-card--no-checks .meal-servings { display: inline; font-size: .7rem; }
+  .meal-checked-note { font-size: .75rem; margin-top: 4px; }
+  .pantry-context { padding-top: 11px; margin-top: 12px; gap: 8px; }
+  .pantry-context h3, #low-pantry li { font-size: .76rem; }
+  .meal-details > summary { font-size: .75rem; }
+  .controls { margin-top: 16px; }
+  .quantity-note { font-size: .82rem; padding: 9px 11px; }
+  .groceries-card .section-heading { gap: 8px; }
+  .more-household { margin-top: 22px; }
+}

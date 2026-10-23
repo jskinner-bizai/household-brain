@@ -62,7 +62,7 @@ try {
   await command('Page.navigate', { url: base });
   await until(() => evaluate('document.readyState === "complete" && Boolean(document.getElementById("connect"))'), 'app load');
   await evaluate('document.getElementById("connect").click()');
-  await until(() => evaluate('document.getElementById("connection-state").textContent === "Sample household is open"'), 'MCP connection');
+  await until(() => evaluate('document.getElementById("connection-state").textContent === "Household is open"'), 'MCP connection');
   assert.equal((await store.groceries()).length, 1);
   await evaluate('document.getElementById("run-planner").click()');
   await until(() => evaluate('document.getElementById("commit-restock").disabled === false'), 'mock proposal');
@@ -89,7 +89,7 @@ try {
   await evaluate('document.getElementById("connect").click()');
   await until(() => evaluate('document.getElementById("grocery-count").textContent === "7 items"'), 'persistent list after restart');
   assert.equal((await store.groceries()).length, 7);
-  assert.match(await evaluate('document.getElementById("scope-summary").textContent'), /saved locally across restarts/);
+  assert.match(await evaluate('document.getElementById("scope-detail").textContent'), /saved locally across restarts/);
   if (process.env.UI_SMOKE_SCREENSHOT) {
     const screenshot = await command('Page.captureScreenshot', { format: 'png' });
     await writeFile(process.env.UI_SMOKE_SCREENSHOT, Buffer.from(screenshot.data, 'base64'));

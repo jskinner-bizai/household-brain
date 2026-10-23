@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc"><title id="title">Household Brain</title><desc id="desc">Simplified connected-home icon for small sizes.</desc><rect width="256" height="256" rx="58" fill="#173C34"/><path d="M45 110 L116 48 Q128 37 140 48 L211 110 V196 Q211 219 188 219 H68 Q45 219 45 196 Z" fill="none" stroke="#F4EFDF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M80 132 C98 112 158 112 176 132 M80 132 C80 164 106 187 128 187 C150 187 176 164 176 132" fill="none" stroke="#F4EFDF" stroke-width="14" stroke-linecap="round"/>
+<circle cx="80" cy="132" r="17" fill="#F2856D"/>
+<circle cx="176" cy="132" r="17" fill="#CFE98A"/>
+<circle cx="128" cy="187" r="17" fill="#F4EFDF"/></svg>

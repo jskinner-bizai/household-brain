@@ -27,6 +27,14 @@ the household changed, nothing is added and a fresh preview needs confirmation.
   and proposes a restock; its model cannot commit changes
 - optional bounded local-file persistence preserves confirmed changes across restarts
 
+The meal-focused page presents the actual fictional plan as illustrated cards, then
+connects each proposed addition to its meal or low-stock reason. These are original
+code-native food illustrations, not recipe photos or imported personal recipes.
+Only each meal's tracked ingredient checklist is checked; planned servings are
+not shopping quantities or proof of a complete recipe. The media identity is
+original project artwork. Its outlined Bricolage Grotesque wordmark retains the
+SIL Open Font License in [web/assets](web/assets/README.md).
+
 ## Tools (9, snake_case)
 
 | Tool | What it does | Writes |
@@ -51,7 +59,7 @@ tool annotations are declared in the tool definitions.
 
 ## Quickstart
 
-Node 20 or later (reviewed on Node 24.14.0, npm 10.5.0, with the committed lock file).
+Node 20.3 or later (reviewed on Node 24.14.0, npm 10.5.0, with the committed lock file).
 
 ```sh
 npm ci --ignore-scripts
@@ -59,25 +67,25 @@ npm test        # builds with tsc, then runs the code/HTTP regression suites
 npm start
 ```
 
-Open **http://127.0.0.1:8099/** in a browser and choose **Open sample household**.
+Open **http://127.0.0.1:8099/** in a browser and choose **Open household**.
 The page initializes the MCP connection, sends the initialized notification,
 discovers all nine tools and reads the household state. It uses the real
 server responses, with optional technical receipts. No LLM interprets
 the form controls.
 
 1. Read the selected dinner plans and low pantry items. Keep the meal selector
-   at 2 and choose **Check what to add**. A fresh server
+   at 2 and choose **Check ingredients**. A fresh server
    proposes six additions; blueberries are already listed. This explicit
    `dry_run: true` request changes nothing.
 2. Review the meal ingredients, low staples, units and reasons, then choose
-   **Add 6 items to sample list**. One unit per missing item is proposed;
+   **Add 6 items to your list**. One unit per missing item is proposed;
    recipe-serving quantities are not calculated. This
    separate `dry_run: false` call sends the preview's `expected_token`.
    The store atomically validates the decision state and adds the batch.
    If another client changed the pantry, plan or list, the write is rejected
    with a fresh preview; review and confirm again. A fresh fixture produces
    six additions, seven grocery lines and a brief that reflects the list.
-3. Read the updated sample list, then check again. The repeated check shows
+3. Read the updated shopping list, then check again. The repeated check shows
    nothing new to add and disables confirmation; it makes no additional write.
 4. Expand the other household tools and mark **take out recycling** done.
    It leaves the open chores and the next
@@ -145,9 +153,9 @@ npm run build
 npm start
 ```
 
-Open the sample household and choose **Plan these meals**. The mock model reads
+Open the household and choose **Plan these meals**. The mock model reads
 the meal plan and pantry, then requests a dry-run preview. It makes no AWS calls.
-Only **Add items to sample list** commits the retained preview. Refreshing the
+Only **Add items to your list** commits the retained preview. Refreshing the
 page can restore that proposal without repeating inference. A server restart
 invalidates old preview tokens while retaining confirmed household state.
 
@@ -215,6 +223,9 @@ demo family). Successful tool results disclose `Synthetic demo: fictional
 household data.` in text or a JSON `notice` field. Local demonstrations run
 against the selected local memory or file store.
 
+Bedrock is an optional integration, disabled by default. The October 23 live
+Ohio proof attempt returned a quota error, so successful AWS execution has not
+been demonstrated; the ordinary checklist and mock tests are not AWS evidence.
 Bedrock is an optional integration, disabled by default. Mock mode must never
 be presented as a live AWS response. The live mode uses fictional household
 fixtures and the operator's explicitly selected named personal AWS login; it
