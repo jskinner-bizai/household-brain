@@ -365,14 +365,17 @@ function renderPreview(result, days, changed = false) {
   if (!additions.length) target.append(element('p', measured ? 'The stored recipe amounts are covered by pantry stock and the list in matching units. Nothing new needs adding.' : 'The checked ingredients are on hand or already listed. This check does not calculate quantities for servings.'));
   const groups = new Map();
   for (const item of additions) {
-    const matching = measured ? state.mealPlan.slice(0, days).filter((meal) => item.reason.toLowerCase().includes(meal.meal.toLowerCase())) : [];
-    const title = matching.length ? 'For the selected meals' : item.reason.startsWith('for ')
+    const matching = state.mealPlan.slice(0, days).filter((meal) => item.reason.toLowerCase().includes(meal.meal.toLowerCase()));
+    const singleMealReason = matching.length === 1 && item.reason.toLowerCase() === `for ${matching[0].meal.toLowerCase()}`;
+    const title = measured && matching.length ? 'For the selected meals' : !measured && singleMealReason ? `For ${matching[0].day}` : item.reason.startsWith('for ')
       ? `For ${item.reason.slice(4)}` : 'Running low at home';
     if (!groups.has(title)) groups.set(title, []);
     groups.get(title).push(item);
   }
   for (const [title, items] of groups) {
-    target.append(element('p', title, 'preview-section-title'));
+    const heading = element('p', title, 'preview-section-title');
+    if (!measured) heading.title = [...new Set(items.map((item) => item.reason))].join('; ');
+    target.append(heading);
     const list = element('ul', undefined, 'preview-items');
     for (const item of items) {
       const line = element('li', undefined, 'preview-item');
@@ -406,7 +409,7 @@ function renderPreview(result, days, changed = false) {
     }
     details.append(list); target.append(details);
   }
-  target.append(element('p', additions.length ? measured ? 'Nothing has been added.' : 'Nothing has been added yet. Add these items only if the list looks right.' : 'No change is needed from this check.', 'preview-footnote'));
+  target.append(element('p', additions.length ? 'Nothing has been added.' : 'No change is needed from this check.', 'preview-footnote'));
   byId('commit-restock').textContent = changed ? `Confirm ${additions.length} updated item${additions.length === 1 ? '' : 's'}` : `Add ${additions.length} item${additions.length === 1 ? '' : 's'} to your list`;
   state.preview = { days, token: content.previewToken, count: additions.length, quantityMode: content.quantityMode, keys: additions.map(itemKey), items: (content.coverage ?? additions).map(previewItemSnapshot) };
   setStage(additions.length ? 'review' : 'done');
@@ -450,7 +453,7 @@ function renderPlannerEvidence(result) {
   byId('planner-section').classList.add('has-proposal');
   byId('planner-mode').textContent = result.mode === 'bedrock'
     ? 'Bedrock proposal. Planner made no changes.'
-    : 'Mock proposal, no inference or AWS calls. Planner made no changes.';
+    : 'Mock: no inference, AWS or list changes.';
   const target = byId('planner-result'); target.replaceChildren();
   const explanation = typeof result.explanation === 'string' ? result.explanation.trim() : '';
   const excerpt = explanation.length > 300 ? `${explanation.slice(0, 300).replace(/\s+\S*$/u, '')}…` : explanation;
@@ -509,7 +512,7 @@ byId('connect').addEventListener('click', () => action('restock-result', async (
   byId('connection-state').textContent = 'Household is open';
   byId('connect').textContent = 'Household open';
   byId('connect').hidden = true;
-  byId('connection-help').textContent = state.persistentState ? 'Your list is saved locally.' : 'Changes reset after a restart.';
+  byId('connection-help').textContent = state.persistentState ? 'Your list is saved locally.' : 'Resets after restart.';
   setStage('check');
   await restorePlannerPreview();
 }, 'Here is the dinner plan. Check what needs adding when you are ready.', { focus: 'preview-restock' }));
@@ -532,7 +535,7 @@ byId('run-planner').addEventListener('click', () => {
     if (result.mode !== state.planner.mode || !result.preview || typeof result.explanation !== 'string') throw new RequestFailure('The planner returned an unexpected result. Adding remains disabled.');
     renderPreview(result.preview, days);
     renderPlannerEvidence(result);
-  }, 'Planner check complete. Review the actual additions before confirming.', { focus: 'preview' });
+  }, 'Planner proposal ready to review.', { focus: 'preview' });
 });
 
 byId('days').addEventListener('change', () => {
