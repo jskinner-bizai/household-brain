@@ -11,7 +11,7 @@ let child: ChildProcess;
 
 before(async () => {
   const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "server.js");
-  child = spawn(process.execPath, [entry], { env: { ...process.env, PORT: String(PORT), NODE_ENV: "" }, stdio: ["ignore", "pipe", "pipe"] });
+  child = spawn(process.execPath, [entry], { env: { ...process.env, PORT: String(PORT), NODE_ENV: "", HOUSEHOLD_DEMO_FIXTURE: "legacy" }, stdio: ["ignore", "pipe", "pipe"] });
   await new Promise<void>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("server did not start")), 8000);
     child.stdout!.on("data", (d) => { if (String(d).includes("listening")) { clearTimeout(t); resolve(); } });

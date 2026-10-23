@@ -11,14 +11,23 @@ export const MAX_QUANTITY = 10_000;
 export interface PantryItem { name: string; quantity: number; unit: string; lowAt: number; }
 export interface GroceryLine { name: string; quantity: number; unit: string; addedBy: string; }
 export interface Chore { name: string; assignee: string; dueInDays: number; done: boolean; }
-export interface MealPlanEntry { day: string; meal: string; servings: number; missingIngredients: string[]; }
+/** Quantities describe the stored recipe's servings, without automatic scaling. */
+export interface RecipeIngredient { name: string; quantity: number; unit: string; }
+export interface MealPlanEntry { day: string; meal: string; servings: number; missingIngredients: string[]; ingredients?: RecipeIngredient[]; }
 export interface EnsureGroceriesResult { added: GroceryLine[]; alreadyListed: GroceryLine[]; list: GroceryLine[]; }
-export interface RestockItem { name: string; unit: string; reason: string; }
-export interface RestockUnitConflict { name: string; requestedUnit: string; listed: { quantity: number; unit: string }[]; }
+export interface RestockItem {
+  name: string; unit: string; reason: string;
+  /** Shopping delta, not the recipe's cooking amount. Zero is valid in coverage. */
+  quantity?: number;
+  requiredQuantity?: number; pantryQuantity?: number; listedQuantity?: number;
+  resultingListQuantity?: number; lowStockFloor?: 1; checklistOnly?: true;
+}
+export interface RestockUnitConflict { name: string; requestedUnit: string; listed: { quantity: number; unit: string }[]; pantry?: { quantity: number; unit: string }[]; }
 export interface RestockResult {
   dryRun: boolean; previewToken: string; added: RestockItem[]; alreadyListed: RestockItem[];
   unitConflicts: RestockUnitConflict[]; writeApplied: boolean;
   previewRequired?: boolean; previewChanged?: boolean;
+  quantityMode?: "measured" | "mixed"; coverage?: RestockItem[];
 }
 
 /** A complete transaction candidate; persistence must succeed before publication. */
@@ -81,7 +90,108 @@ export function normalizedQuantity(value: number): number {
   if (Math.abs(scaled - Math.round(scaled)) > 0.000001) throw new Error("Quantity supports at most three decimal places.");
   return Math.round(scaled) / 1000;
 }
+/** Reject ambiguous recipe units instead of inferring a conversion or a quantity. */
+export function normalizedMeasuredUnit(value: string): string {
+  const unit = normalizedText(value, "Recipe unit", UNIT_LIMIT);
+  // A bounded explicit vocabulary rejects vague free text. Accepted spellings
+  // remain separate exact identities: e.g. cup/cups, lb/oz and g/kg are NEVER
+  // converted or treated as aliases. Unsupported units need a reviewed source.
+  const supported = new Set(["each", "g", "gram", "grams", "kg", "kilogram", "kilograms", "mg", "milligram", "milligrams",
+    "lb", "pound", "pounds", "oz", "ounce", "ounces", "ml", "milliliter", "milliliters", "millilitre", "millilitres",
+    "l", "liter", "liters", "litre", "litres", "tsp", "teaspoon", "teaspoons", "tbsp", "tablespoon", "tablespoons",
+    "cup", "cups", "fl oz", "fluid ounce", "fluid ounces", "pint", "pints", "quart", "quarts", "gallon", "gallons",
+    "clove", "cloves", "can", "cans", "pack", "packs", "carton", "cartons", "slice", "slices", "pinch", "pinches",
+    "bunch", "bunches", "head", "heads", "stalk", "stalks", "sprig", "sprigs"]);
+  if (!supported.has(unit)) throw new Error("Recipe units must use a supported explicit unit such as tsp or tbsp, not ambiguous t/T or free text. Units are not converted.");
+  return unit;
+}
+export function validatedRecipeIngredient(value: unknown): RecipeIngredient {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).sort().join("|") !== "name|quantity|unit") throw new Error("Invalid measured recipe ingredient structure.");
+  const ingredient = value as Record<string, unknown>;
+  if (typeof ingredient.name !== "string" || typeof ingredient.unit !== "string" || typeof ingredient.quantity !== "number") throw new Error("Recipe ingredients need an explicit name, numeric quantity and unit.");
+  return { name: normalizedText(ingredient.name, "Ingredient", NAME_LIMIT), quantity: normalizedQuantity(ingredient.quantity), unit: normalizedMeasuredUnit(ingredient.unit) };
+}
+export function validatedRecipeIngredients(value: unknown): RecipeIngredient[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error("Measured recipe ingredients must be an array of at most 200 entries.");
+  return value.map(validatedRecipeIngredient);
+}
 export const groceryKey = (line: { name: string; unit: string }) => JSON.stringify([norm(line.name), norm(line.unit)]);
+
+const milli = (value: number, zero = false) => zero && value === 0 ? 0 : Math.round(normalizedQuantity(value) * 1000);
+function checkedMilliSum(left: number, right: number): number {
+  const total = left + right;
+  if (!Number.isSafeInteger(total) || total > MAX_QUANTITY * 1000) throw new Error("Combined recipe or coverage quantity is too large.");
+  return total;
+}
+
+export interface MeasuredRestockPlan {
+  quantityMode: "measured" | "mixed"; coverage: RestockItem[];
+  added: RestockItem[]; alreadyListed: RestockItem[]; unitConflicts: RestockUnitConflict[];
+}
+/** Pure shared calculation for previews and the brief. No stock is consumed. */
+export function calculateMeasuredRestock(plan: MealPlanEntry[], pantry: PantryItem[], list: GroceryLine[], days: number): MeasuredRestockPlan | undefined {
+  if (!Number.isInteger(days) || days < 1 || days > 7) throw new Error("Meals to cover must be an integer from 1 to 7.");
+  const selected = plan.slice(0, days);
+  if (!selected.some(meal => meal.ingredients !== undefined)) return undefined;
+  type Need = { name: string; unit: string; required: number; checklistFloor: number; lowFloor: number; meals: Set<string> };
+  const needs = new Map<string, Need>();
+  const need = (name: string, unit: string): Need => {
+    const key = groceryKey({ name, unit });
+    let entry = needs.get(key);
+    if (!entry) { entry = { name, unit, required: 0, checklistFloor: 0, lowFloor: 0, meals: new Set() }; needs.set(key, entry); }
+    return entry;
+  };
+  for (const meal of selected) {
+    if (meal.ingredients !== undefined) {
+      for (const ingredient of validatedRecipeIngredients(meal.ingredients)) {
+        const entry = need(ingredient.name, ingredient.unit);
+        entry.required = checkedMilliSum(entry.required, milli(ingredient.quantity));
+        entry.meals.add(meal.meal);
+      }
+    } else {
+      // Legacy recipes still declare a one-unit checklist, not invented amounts.
+      for (const name of meal.missingIngredients) {
+        if (ingredientOnHand(name, pantry)) continue;
+        const entry = need(requireName(name, "Ingredient"), normalizedText(ingredientUnit(name, pantry), "Unit", UNIT_LIMIT));
+        entry.checklistFloor = 1000;
+        entry.meals.add(meal.meal);
+      }
+    }
+  }
+  for (const item of pantry) {
+    const quantity = milli(item.quantity, true), threshold = milli(item.lowAt, true);
+    if (quantity <= threshold) need(requireName(item.name, "Item name"), normalizedText(item.unit, "Unit", UNIT_LIMIT)).lowFloor = 1000;
+  }
+  if (needs.size > GROCERY_LINE_LIMIT) throw new Error(`A restock plan is limited to ${GROCERY_LINE_LIMIT} lines.`);
+  const coverage = [...needs.values()].map(entry => {
+    const key = groceryKey(entry);
+    const pantryAmount = pantry.filter(item => groceryKey(item) === key).reduce((total, item) => checkedMilliSum(total, milli(item.quantity, true)), 0);
+    const listedAmount = list.filter(item => groceryKey(item) === key).reduce((total, item) => checkedMilliSum(total, milli(item.quantity)), 0);
+    // Preserve the existing one-unit low-stock/checklist floor. It is a minimum
+    // shopping amount, not an extra amount added to the recipe shortfall.
+    const targetListed = Math.max(0, entry.required - pantryAmount, entry.checklistFloor, entry.lowFloor);
+    const delta = Math.max(0, targetListed - listedAmount);
+    const reasons = [...entry.meals].map(meal => `for ${meal}`);
+    if (entry.lowFloor) reasons.push("running low");
+    return {
+      name: entry.name, unit: entry.unit, reason: reasons.join("; "),
+      quantity: delta / 1000, requiredQuantity: entry.required / 1000,
+      pantryQuantity: pantryAmount / 1000, listedQuantity: listedAmount / 1000,
+      resultingListQuantity: checkedMilliSum(listedAmount, delta) / 1000,
+      ...(entry.lowFloor ? { lowStockFloor: 1 as const } : {}),
+      ...(entry.checklistFloor && !entry.required ? { checklistOnly: true as const } : {}),
+    };
+  });
+  const added = coverage.filter(item => item.quantity > 0);
+  const alreadyListed = coverage.filter(item => item.quantity === 0 && item.listedQuantity > 0);
+  const unitConflicts = added.flatMap(item => {
+    const otherListed = list.filter(line => norm(line.name) === item.name && norm(line.unit) !== item.unit).map(({ quantity, unit }) => ({ quantity, unit }));
+    const otherPantry = pantry.filter(line => norm(line.name) === item.name && norm(line.unit) !== item.unit).map(({ quantity, unit }) => ({ quantity, unit }));
+    return otherListed.length || otherPantry.length ? [{ name: item.name, requestedUnit: item.unit, listed: otherListed, ...(otherPantry.length ? { pantry: otherPantry } : {}) }] : [];
+  });
+  return { quantityMode: selected.every(meal => meal.ingredients !== undefined) ? "measured" : "mixed", coverage, added, alreadyListed, unitConflicts };
+}
 
 // A longer spoken phrase must not match a shorter stored name, such as a negation.
 export function looseMatch(spoken: string, stored: string): boolean {
@@ -139,7 +249,11 @@ export class MemoryStore implements HouseholdStore {
     { name: "refill dog bowl", assignee: "Dad (fictional)", dueInDays: 0, done: false },
   ];
   constructor(private readonly options: MemoryStoreOptions = {}) {
-    if (options.initialState) this.publish(structuredClone(options.initialState));
+    if (options.initialState) {
+      const initial = structuredClone(options.initialState);
+      initial.meal = initial.meal.map(meal => meal.ingredients === undefined ? meal : { ...meal, ingredients: validatedRecipeIngredients(meal.ingredients) });
+      this.publish(initial);
+    }
   }
   /** Returns detached data for a durable adapter's initial snapshot. */
   snapshot(): HouseholdState {
@@ -208,6 +322,26 @@ export class MemoryStore implements HouseholdStore {
       // entire snapshot. All MemoryStore writers acquire this same lock.
       const [plan, pantry, list] = await Promise.all([this.mealPlan(), this.pantry(), this.groceries()]);
       const token = createHash("sha256").update(JSON.stringify({ nonce: this.previewNonce, days, plan, pantry, list })).digest("hex");
+      const measured = calculateMeasuredRestock(plan, pantry, list, days);
+      if (measured) {
+        const preview: RestockResult = { ...measured, dryRun: true, previewToken: token, writeApplied: false };
+        if (dryRun) return structuredClone(preview);
+        if (typeof expectedToken !== "string" || !/^[a-f0-9]{64}$/.test(expectedToken)) return structuredClone({ ...preview, previewRequired: true });
+        if (!timingSafeEqual(Buffer.from(token, "hex"), Buffer.from(expectedToken, "hex"))) return structuredClone({ ...preview, previewChanged: true });
+        // Do not use insertion-only ensureGroceries for measured top-ups. Prepare
+        // all increments on a detached candidate, validate every line/capacity,
+        // then persist once before publishing. No nested lock or per-item write.
+        const candidate = this.snapshot();
+        for (const item of measured.added) {
+          const existing = candidate.groceryLines.find(line => groceryKey(line) === groceryKey(item));
+          const delta = normalizedQuantity(item.quantity!);
+          if (existing) existing.quantity = normalizedQuantity(checkedMilliSum(milli(existing.quantity), milli(delta)) / 1000);
+          else candidate.groceryLines.push(normalizedLine({ name: item.name, unit: item.unit, quantity: delta, addedBy: "restock (local recipe demo)" }));
+        }
+        if (candidate.groceryLines.length > GROCERY_LINE_LIMIT) throw new Error(`The grocery list is limited to ${GROCERY_LINE_LIMIT} lines.`);
+        if (measured.added.length) await this.commit(candidate);
+        return structuredClone({ ...preview, dryRun: false, writeApplied: measured.added.length > 0 });
+      }
       const wanted = new Map<string, RestockItem>();
       for (const meal of plan.slice(0, days)) {
         for (const ingredient of meal.missingIngredients) {

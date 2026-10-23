@@ -12,6 +12,7 @@ import { registerBriefTools } from "./tools/brief.js";
 import { registerHouseholdTools } from "./tools/household.js";
 
 import { HouseholdStore, MemoryStore } from "./store.js";
+import { measuredDemoState } from "./measured-fixture.js";
 import { HouseholdPlanner, PlannerError, type PlannerModel, type PlannerResult, type PlannerProgress } from "./planner.js";
 import type { FileStore } from "./file-store.js";
 
@@ -60,6 +61,8 @@ const webAssets = new Map([
   ["/styles.css", { name: "styles.css", type: "text/css; charset=utf-8" }],
   ["/assets/household-brain-lockup-light.svg", { name: "assets/household-brain-lockup-light.svg", type: "image/svg+xml" }],
   ["/assets/household-brain-favicon.svg", { name: "assets/household-brain-favicon.svg", type: "image/svg+xml" }],
+  ["/assets/herb-chicken-brussels-quinoa.svg", { name: "assets/herb-chicken-brussels-quinoa.svg", type: "image/svg+xml" }],
+  ["/assets/steak-fajita-cauliflower-bowl.svg", { name: "assets/steak-fajita-cauliflower-bowl.svg", type: "image/svg+xml" }],
 ]);
 const reservedPaths = new Set([...webAssets.keys(), "/healthz", "/demo-config.json", "/planner/preview", "/planner/result"]);
 const webRoot = new URL("../web/", import.meta.url);
@@ -261,11 +264,14 @@ async function startLocalDemo() {
   if (mode === "bedrock" && (process.env.HOUSEHOLD_AWS_DEMO_APPROVED !== "1" || !process.env.HOUSEHOLD_AWS_DEMO_RECEIPT)) {
     throw new Error("Live mode requires explicit demo approval and a durable HOUSEHOLD_AWS_DEMO_RECEIPT path. No AWS request was made.");
   }
+  const fixture = process.env.HOUSEHOLD_DEMO_FIXTURE ?? "recipes";
+  if (!["recipes", "legacy"].includes(fixture)) throw new Error("HOUSEHOLD_DEMO_FIXTURE must be recipes or legacy");
+  const initialState = fixture === "recipes" ? measuredDemoState() : undefined;
   const persistent = process.env.HOUSEHOLD_STATE_FILE;
   let fileStore: FileStore | undefined;
   if (persistent) {
     try {
-      fileStore = await (await import("./file-store.js")).FileStore.open(resolve(persistent));
+      fileStore = await (await import("./file-store.js")).FileStore.open(resolve(persistent), initialState);
     } catch {
       // Keep paths, snapshot contents and raw filesystem errors out of startup output.
       // FileStore retains its existing validation and owned-lock cleanup behavior.
@@ -286,7 +292,7 @@ async function startLocalDemo() {
         onProgress: createDemoJournal(process.env.HOUSEHOLD_AWS_DEMO_RECEIPT!),
       };
     }
-    const server = createDemoHttpServer({ endpoint, store: fileStore, persistentState: Boolean(fileStore), planner: plannerConfig,
+    const server = createDemoHttpServer({ endpoint, store: fileStore ?? (initialState ? new MemoryStore({ initialState }) : undefined), persistentState: Boolean(fileStore), planner: plannerConfig,
       allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean) });
     httpServer = server;
     await new Promise<void>((resolve, reject) => {

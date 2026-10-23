@@ -190,7 +190,7 @@ test("malformed hosts and numeric loopback aliases are refused before MCP dispat
 });
 
 test("custom MCP endpoint is advertised and cannot shadow static, health or config routes", async t => {
-  for (const endpoint of ["/", "/app.js", "/styles.css", "/assets/household-brain-lockup-light.svg", "/assets/household-brain-favicon.svg", "/healthz", "/demo-config.json", "//mcp", "/a/../mcp", "/mcp?x", "/mcp#x", "/mcp\\path", "mcp"]) {
+  for (const endpoint of ["/", "/app.js", "/styles.css", "/assets/household-brain-lockup-light.svg", "/assets/household-brain-favicon.svg", "/assets/herb-chicken-brussels-quinoa.svg", "/assets/steak-fajita-cauliflower-bowl.svg", "/healthz", "/demo-config.json", "//mcp", "/a/../mcp", "/mcp?x", "/mcp#x", "/mcp\\path", "mcp"]) {
     assert.throws(() => createDemoHttpServer({ endpoint }), /MCP_ENDPOINT/, endpoint);
   }
   const { base, post } = await start(t, { endpoint: "/custom/mcp" });
@@ -202,7 +202,7 @@ test("custom MCP endpoint is advertised and cannot shadow static, health or conf
 
 test("only explicit GET assets are served with restrictive content headers", async t => {
   const { base, url } = await start(t);
-  for (const [path, type] of [["/", "text/html"], ["/app.js", "text/javascript"], ["/styles.css", "text/css"], ["/assets/household-brain-lockup-light.svg", "image/svg\\+xml"], ["/assets/household-brain-favicon.svg", "image/svg\\+xml"]]) {
+  for (const [path, type] of [["/", "text/html"], ["/app.js", "text/javascript"], ["/styles.css", "text/css"], ["/assets/household-brain-lockup-light.svg", "image/svg\\+xml"], ["/assets/household-brain-favicon.svg", "image/svg\\+xml"], ["/assets/herb-chicken-brussels-quinoa.svg", "image/svg\\+xml"], ["/assets/steak-fajita-cauliflower-bowl.svg", "image/svg\\+xml"]]) {
     const response = await fetch(base + path);
     assert.equal(response.status, 200, path); assert.ok((await response.text()).length > 0);
     assert.match(response.headers.get("content-type") ?? "", new RegExp(type));

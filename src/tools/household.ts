@@ -83,7 +83,9 @@ export function registerHouseholdTools(server: McpServer, store: HouseholdStore 
     },
     async () => {
       const plan = await store.mealPlan();
-      const spoken = plan.map((m) => `${m.day}: ${m.meal}${m.missingIngredients.length ? `, ingredient checklist: ${m.missingIngredients.join(" and ")}` : ""}`);
+      const spoken = plan.map((m) => m.ingredients !== undefined
+        ? `${m.day}: ${m.meal}, ${m.servings} servings; recipe cooking amounts: ${m.ingredients.map(ingredient => `${ingredient.quantity} ${ingredient.unit} of ${ingredient.name}`).join(", ")}. These are recipe amounts, not shopping additions`
+        : `${m.day}: ${m.meal}${m.missingIngredients.length ? `, ingredient checklist: ${m.missingIngredients.join(" and ")}` : ""}`);
       const text = `Here's the plan. ${spoken.join(". ")}.`;
       return { ...demoText(text), structuredContent: { demo: true, plan } };
     }
@@ -146,7 +148,7 @@ export function registerHouseholdTools(server: McpServer, store: HouseholdStore 
     {
       title: "Restock for upcoming meals",
       description:
-        "Checks synthetic demo meals and pantry, then ensures one unit of each missing ingredient or low staple is on the demo grocery list. First use dry_run:true, review its plan, then commit with dry_run:false and expected_token from that preview. Every commit validates pantry, meals, groceries and days atomically; stale/missing tokens write nothing and require a fresh reviewed confirmation. Tokens are concurrency control, not authentication. Exact name and unit pairs are deduplicated. Ingredient quantities for servings are not modeled. No purchases or live changes.",
+        "Checks local recipe facts or legacy meal fixtures against synthetic demo pantry and groceries. Measured recipes sum cooking requirements and add only the exact-unit shortfall after pantry stock and quantities already listed, retaining the existing one-unit low-stock minimum without double counting. No conversions or serving scaling. Recipes without measured ingredients retain a one-unit checklist. First use dry_run:true, review the amounts, then commit with dry_run:false and expected_token from that preview. Every commit validates pantry, meals, groceries and days atomically; stale/missing tokens write nothing and require a fresh confirmation. Tokens are concurrency control, not authentication. No purchases or live changes.",
       inputSchema: {
         days: z.number().int().min(1).max(7).default(2).describe("How many planned meals ahead to cover, starting tonight"),
         dry_run: z.boolean().default(false).describe("If true, only say what would be added"),
@@ -164,6 +166,13 @@ export function registerHouseholdTools(server: McpServer, store: HouseholdStore 
       };
       const { added: toAdd, alreadyListed: already, unitConflicts } = result;
       const verb = result.dryRun ? "I'd add" : "Added";
+      if (result.quantityMode) {
+        const text = toAdd.length
+          ? `${verb} ${plural(toAdd.length, "shopping line")}: ${toAdd.map(item => `${item.quantity} ${item.unit} of ${quoted(item.name)} (list total ${item.resultingListQuantity} ${item.unit})`).join(", ")}. These are shopping additions after exact-unit coverage, not full recipe amounts.`
+          : "No shopping additions are needed for the measured amounts and checklist floors checked. Pantry stock is unchanged.";
+        const conflicts = unitConflicts.length ? ` Unit differences: ${unitConflicts.map(conflict => `${quoted(conflict.name)} has other units in ${[conflict.listed.length ? "the list" : "", conflict.pantry?.length ? "the pantry" : ""].filter(Boolean).join(" and ")}; these do not cover ${conflict.requestedUnit}`).join(". ")}. Units are not converted.` : "";
+        return { ...demoText(text + conflicts + (result.quantityMode === "mixed" ? " Some selected meals have unmeasured checklist ingredients; their cooking quantities remain unknown." : "")), structuredContent: { demo: true, ...result } };
+      }
       let text = toAdd.length
         ? `${verb} ${plural(toAdd.length, "item")}: ${toAdd.map((w) => quoted(w.name)).join(", ")}.${already.length ? ` Already on the list: ${already.map((w) => quoted(w.name)).join(", ")}.` : ""}`
         : "The ingredient checklist is covered: items are on hand or already on the list. Quantities for servings are not modeled.";

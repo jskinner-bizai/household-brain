@@ -325,7 +325,7 @@ h1 { font-size: clamp(2rem, 4.3vw, 3.6rem); margin-bottom: 12px; letter-spacing:
 .meal-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .meal-card, .meal-card + .meal-card { display: grid; grid-template-columns: minmax(130px, .9fr) minmax(0, 1.2fr); gap: 0; padding: 0; border: 1px solid #d5dccd; border-radius: 14px; background: #fffdf7; overflow: hidden; min-width: 0; }
 .meal-art { display: grid; align-items: center; min-width: 0; background: #f2e8dc; }
-.meal-art svg { display: block; width: 100%; height: auto; }
+.meal-art svg, .meal-art img { display: block; width: 100%; height: auto; }
 .meal-card-body { min-width: 0; padding: 16px; }
 .meal-day { display: inline-block; color: #8d4a33; font-size: .73rem; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; }
 .meal-name { font-size: 1.38rem; line-height: 1.19; text-wrap: pretty; }
@@ -336,6 +336,10 @@ h1 { font-size: clamp(2rem, 4.3vw, 3.6rem); margin-bottom: 12px; letter-spacing:
 .meal-check-details ul { padding-left: 18px; margin: 0 0 8px; }
 .meal-check-details li, .meal-check-details p { font-size: .84rem; line-height: 1.5; }
 .meal-check-details p { color: #5b6558; margin: 0; }
+.meal-check-details .recipe-ingredients { list-style: none; padding-left: 0; }
+.recipe-ingredients li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e8e9df; padding-block: 6px; }
+.recipe-ingredients li > span { min-width: 0; overflow-wrap: anywhere; }
+.recipe-amount { flex-shrink: 0; max-width: 48%; overflow-wrap: anywhere; font-weight: 650; }
 .meal-checked-note { font-size: .8rem; line-height: 1.4; color: #5b6558; margin: 8px 0 0; }
 .pantry-context { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding-top: 13px; margin-top: 15px; }
 .pantry-context h3 { margin: 0; font-size: .84rem; }
@@ -348,6 +352,12 @@ h1 { font-size: clamp(2rem, 4.3vw, 3.6rem); margin-bottom: 12px; letter-spacing:
 #grocery-list ul { grid-template-columns: minmax(0, 1fr); }
 .count-badge { display: inline-block; min-width: 0; padding: 4px 8px; font-size: .8rem; line-height: 1.4; letter-spacing: .01em; word-spacing: .2em; white-space: nowrap; }
 .quantity-note { font-size: .875rem; color: #655332; background: #f7f0df; border-radius: 8px; padding: 10px 12px; line-height: 1.5; }
+.resulting-quantity { display: block; font-size: .74rem; line-height: 1.4; }
+.coverage-details { border-top: 1px solid #d9e2cf; padding-top: 5px; margin-block: 8px 12px; }
+.coverage-details > summary { font-size: .8rem; line-height: 1.4; }
+.coverage-items { list-style: none; padding: 0 !important; margin: 0; }
+.coverage-items > li { border-top: 1px solid #d9e2cf; padding-block: 8px; margin: 0; }
+.coverage-items p { font-size: .8rem; line-height: 1.5; margin: 5px 0 0; }
 .planner-explanation { margin-bottom: 8px; font-size: .9rem; line-height: 1.5; }
 .planner-trace-summary { font-size: .82rem; line-height: 1.5; color: #53664e; }
 .more-household { margin-top: 24px; }
@@ -373,7 +383,7 @@ h1 { font-size: clamp(2rem, 4.3vw, 3.6rem); margin-bottom: 12px; letter-spacing:
   .meal-list { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .meal-card, .meal-card + .meal-card { grid-template-columns: 88px minmax(0, 1fr); border-radius: 10px; }
   .meal-art { align-items: start; padding-top: 12px; }
-  .meal-art svg { min-height: 64px; }
+  .meal-art svg, .meal-art img { min-height: 64px; }
   .meal-card-body { padding: 11px 11px 7px; }
   .meal-name { font-size: 1.12rem; line-height: 1.15; }
   .meal-day { font-size: .65rem; margin-bottom: 3px; }

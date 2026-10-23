@@ -1,0 +1,9 @@
+# Recipe content and fictional household provenance
+
+The two recipe titles, four-serving amounts and factual ingredient lists were read from the existing shared recipe library on 23 October 2026, with the user's explicit permission to use their meal-plan/recipe content for this demo. No source instructions, long recipe prose, photographs, health metrics, dietary/medical profile, private notes, family identifiers or credentials were copied. Public ingredient labels omit dietary qualifiers without changing ingredient types or quantities. Preparation times are unknown.
+
+The recipes are herb chicken with Brussels sprouts and quinoa-walnut pilaf, and steak fajita bowls with cilantro-lime cauliflower rice. Ingredient facts are in src/measured-fixture.ts. They are already amounts for four servings; this prototype does not scale portions, infer package sizes or convert units, including raw/cooked quantities. Names and units must match exactly after the existing text normalization.
+
+The pantry amounts, existing blueberry list line, relative tonight/tomorrow schedule and chores are fictional test fixtures. They are not observations of the person's real stock, calendar or family. Partial same-unit stock deliberately produces six shortfalls. Adding groceries does not replenish pantry stock, reserve ingredients, purchase anything or establish cooking completion.
+
+CLI startup defaults to the recipes fixture. HOUSEHOLD_DEMO_FIXTURE=legacy retains the earlier unmeasured checklist fixture for compatibility/replay. An existing saved snapshot is always loaded as-is; selecting a fixture never resets it. Choose a new private synthetic state path to try the new recipes. Library MemoryStore and createDemoHttpServer defaults remain backward compatible. The final source and actual capture receipts identify which fixture was exercised.

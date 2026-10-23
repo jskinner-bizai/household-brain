@@ -27,11 +27,14 @@ the household changed, nothing is added and a fresh preview needs confirmation.
   and proposes a restock; its model cannot commit changes
 - optional bounded local-file persistence preserves confirmed changes across restarts
 
-The meal-focused page presents the actual fictional plan as illustrated cards, then
-connects each proposed addition to its meal or low-stock reason. These are original
-code-native food illustrations, not recipe photos or imported personal recipes.
-Only each meal's tracked ingredient checklist is checked; planned servings are
-not shopping quantities or proof of a complete recipe. The media identity is
+The meal-focused page presents two recipes from the authorized shared library as
+illustrated cards, then connects each proposed shopping addition to the selected
+meals or low-stock reason. Ingredient names, cooking amounts and four-serving
+recipe yields are factual; pantry stock, shopping state and the relative plan are
+fictional. The server subtracts only matching name/unit amounts and does not scale
+servings, convert units or infer raw/cooked equivalents. Meals without explicit
+amounts retain a disclosed one-unit checklist. The food illustrations are original
+code-native artwork, not recipe photos. The media identity is
 original project artwork. Its outlined Bricolage Grotesque wordmark retains the
 SIL Open Font License in [web/assets](web/assets/README.md).
 
@@ -44,10 +47,10 @@ SIL Open Font License in [web/assets](web/assets/README.md).
 | `brief_preferences` | Lists brief sources, defaults, and demo disclosure | no |
 | `pantry_query` | Look up one item by name, or hear everything running low | no |
 | `groceries_add` | Add an item to the grocery list; same name+unit lines merge | yes |
-| `mealplan_get` | Read the meal plan and its ingredient checklist | no |
+| `mealplan_get` | Read measured recipe ingredients or a legacy ingredient checklist | no |
 | `chore_log` | Mark a chore done by exact or unambiguous partial name | yes |
 | `household_summary` | Low pantry stock, actual grocery lines and count, tonight's meal, open chores | no |
-| `restock_for_meals` | Preview missing ingredients and low staples; a commit requires `expected_token` from that preview and atomically validates state before adding one unit per absent name/unit pair | yes |
+| `restock_for_meals` | Preview missing ingredients and low staples; a commit requires `expected_token` from that preview and atomically validates state before applying exact-unit measured shortfalls (legacy fixtures retain one-unit checklists) | yes |
 
 Tool names use `snake_case`, which avoids dotted-name restrictions in
 common LLM tool-calling APIs. The optional planner uses Amazon Nova Lite through
@@ -73,24 +76,30 @@ discovers all nine tools and reads the household state. It uses the real
 server responses, with optional technical receipts. No LLM interprets
 the form controls.
 
-1. Read the selected dinner plans and low pantry items. Keep the meal selector
-   at 2 and choose **Check ingredients**. A fresh server
-   proposes six additions; blueberries are already listed. This explicit
-   `dry_run: true` request changes nothing.
-2. Review the meal ingredients, low staples, units and reasons, then choose
-   **Add 6 items to your list**. One unit per missing item is proposed;
-   recipe-serving quantities are not calculated. This
-   separate `dry_run: false` call sends the preview's `expected_token`.
-   The store atomically validates the decision state and adds the batch.
-   If another client changed the pantry, plan or list, the write is rejected
-   with a fresh preview; review and confirm again. A fresh fixture produces
-   six additions, seven grocery lines and a brief that reflects the list.
-3. Read the updated shopping list, then check again. The repeated check shows
-   nothing new to add and disables confirmation; it makes no additional write.
-4. Expand the other household tools and mark **take out recycling** done.
-   It leaves the open chores and the next
-   household brief. Pantry, meal-plan and brief controls expose the remaining
-   journeys; server details show health, preferences and discovered definitions.
+1. The default CLI fixture shows **herb chicken, Brussels sprouts and quinoa-walnut
+   pilaf**, then **steak fajita bowls with cilantro-lime cauliflower rice**. Their
+   factual ingredients are amounts for four servings. Expand each card for the
+   cooking ingredients; no preparation time or portion scaling is invented.
+2. Keep **Tonight + tomorrow** selected and choose **Check ingredients**. The
+   preview sums exact normalized name/unit pairs across both recipes, subtracts
+   matching fictional pantry stock and amounts already listed, and changes nothing.
+   Cooking requirements, pantry/list coverage and shopping additions remain distinct.
+3. Review the six measured shortfalls and confirm deliberately: chicken thighs
+   **4 each**, Brussels sprouts **1 lb**, garlic cloves **2 each**, flank steak
+   **1 lb**, bell peppers **2 each** and cauliflower rice **3 cup**. These are
+   proposed additions to the existing blueberry line, not an order. The commit
+   validates the preview and current state atomically and publishes the whole
+   batch only after persistence succeeds. Existing same-unit lines are topped up
+   by the reviewed delta; they are not assumed fully covered merely by name.
+4. A fresh fixture produces seven grocery lines. Check again: the matching list
+   quantities cover those shortfalls, so nothing else is proposed or written.
+   Other household tools, actual receipts and the updated brief remain available
+   under their disclosures. Adding groceries does not replenish pantry stock.
+
+The pantry amounts, blueberry line, relative schedule and chores are fictional.
+The two recipes use authorized ingredient facts from the existing shared library;
+no health metrics, private notes, family identifiers, long recipe instructions or
+photos are imported. See [RECIPE_PROVENANCE.md](RECIPE_PROVENANCE.md).
 
 Manual grocery additions **increase** the existing quantity for the same
 normalized item name and unit. There is no undo/remove tool. In-flight
@@ -102,9 +111,8 @@ The read-only refresh does not repeat the write.
 All clients share one store. With the default in-memory store, restarting
 creates fresh fictional fixtures; refreshing the page does not reset it. Set
 `HOUSEHOLD_STATE_FILE` for durable local state, as described below. Adding to
-the grocery list does not replenish pantry stock or place an order. The
-restock is an ingredient checklist, not a recipe-quantity calculation.
-The fixture plan contains three meals; the web selector exposes those three.
+the grocery list does not replenish pantry stock or place an order. Measured recipes use exact-unit shortfall calculation; meals without explicit quantities retain a legacy one-unit checklist.
+The recipe fixture has two measured meals and a leftovers entry; the web selector exposes those three.
 
 Every restock write, including direct MCP calls, requires `expected_token`
 from a prior `dry_run: true` result's `structuredContent.previewToken`.
@@ -159,12 +167,16 @@ Only **Add items to your list** commits the retained preview. Refreshing the
 page can restore that proposal without repeating inference. A server restart
 invalidates old preview tokens while retaining confirmed household state.
 
-Environment: `PORT` (default 8099), `MCP_ENDPOINT` (default `/mcp`) and
+Environment: `HOUSEHOLD_DEMO_FIXTURE` (`recipes` by default, or `legacy`), `PORT` (default 8099), `MCP_ENDPOINT` (default `/mcp`) and
 `ALLOWED_ORIGINS` (comma-separated exact HTTP(S) origins, without paths).
 The web client reads the actual MCP path from `GET /demo-config.json`, so a
 custom normalized endpoint also works from the root page. Custom endpoints
 must not shadow static, health, config or planner routes. Planner mode is
 `off` (default), `mock` or explicitly authorized `bedrock`.
+
+The CLI seeds a new missing state file from the selected fixture. An existing snapshot is loaded as-is and is never replaced by a fixture choice. Use a new private synthetic path for the recipe demo. Library MemoryStore/createDemoHttpServer defaults retain the earlier legacy fixture for compatibility.
+
+Measured recipe quantities are already for the displayed servings; there is no serving scaling, package rounding, conversion between units, or inference between raw/cooked ingredients. Wrong-unit stock/list entries remain visible conflicts and provide no matching coverage. The low-stock floor remains one shopping unit and is combined with a recipe shortfall using max, not added twice. Qualitative, ambiguous or overprecision measurements are rejected instead of guessed.
 
 The server binds loopback. Browser requests require the exact same HTTP
 origin by default; native MCP clients may omit Origin. An explicit allowlist

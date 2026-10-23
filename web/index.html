@@ -43,7 +43,7 @@
       </section>
       <section id="journey-step-2" class="card restock" aria-labelledby="restock-heading">
         <div class="section-heading"><div><p class="eyebrow step-label">02 / CHECK BEFORE YOU ADD</p><h2 id="restock-heading">What should go on the list?</h2></div><span class="step-tag">You confirm the change</span></div>
-        <p class="section-intro">Check planned ingredients and low staples against what’s in the pantry or already on the list.</p>
+        <p class="section-intro">Compare the meal ingredients with pantry stock and your list. Review the shortfall before adding anything.</p>
         <div class="controls"><div class="field"><label for="days">Meals to check</label><select id="days"><option value="1">Tonight</option><option value="2" selected>Tonight + tomorrow</option><option value="3">Next 3 meals</option></select></div><button id="preview-restock" type="button" data-action disabled>Check ingredients</button></div>
         <section id="planner-section" class="planner-section" aria-labelledby="planner-heading" hidden>
           <h3 id="planner-heading">Ask the planner to check</h3>
@@ -52,9 +52,9 @@
           <button id="run-planner" type="button" disabled>Plan these meals</button>
         </section>
         <div id="preview" class="preview" role="region" aria-label="Restock preview" tabindex="-1"><p>Your proposed additions will appear here. Checking won’t change the list.</p></div>
+        <p id="quantity-note" class="quantity-note">Review the recipe amounts and shopping additions before confirming. No serving scaling, unit conversion or raw-to-cooked conversion.</p>
         <div class="confirm-row"><button id="commit-restock" type="button" disabled>Add to your list</button><p class="confirm-help">Nothing is added until you confirm.</p></div>
-        <p class="quantity-note">Each missing item adds <strong>one checklist unit</strong>. Cooking amounts and serving quantities are not calculated. Check amounts before shopping.</p>
-        <details class="restock-rules"><summary>How the check works</summary><p>The server adds one unit per missing item, not recipe-serving quantities. A name in another unit stays separate and is shown before confirmation. Every add validates the preview and current household state together, atomically. If relevant state changed, nothing is added: review the updated preview and confirm again.</p></details>
+        <details class="restock-rules"><summary>How the check works</summary><p id="quantity-rules">Measured ingredients use stored recipe amounts minus exact-unit pantry stock and existing list quantities. Unmeasured entries use a one-unit checklist rule. Every add validates the preview and current household state atomically. If state changed, nothing is added: review and confirm again.</p></details>
         <div id="restock-result" class="result" role="region" aria-label="Restock result" tabindex="-1"></div>
         <div id="planner-result" class="result" role="region" aria-label="Planner result" tabindex="-1"></div>
       </section>

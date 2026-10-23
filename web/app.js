@@ -184,6 +184,17 @@ function mealArtwork(name) {
   }
   return svg;
 }
+function renderQuantityScope(mode = state.preview?.quantityMode) {
+  const meals = state.mealPlan.slice(0, Number(byId('days').value));
+  const measured = mode === 'measured' || mode === 'mixed' || meals.some((meal) => Array.isArray(meal.ingredients));
+  const mixed = mode === 'mixed' || (measured && meals.some((meal) => !Array.isArray(meal.ingredients)));
+  byId('quantity-note').textContent = measured
+    ? `${mixed ? 'Measured amounts plus unmeasured checklist items. ' : 'Stored recipe servings and exact units. '}No scaling, pack-size inference or raw-to-cooked conversion. Review amounts before adding.`
+    : 'Adds 1 unit per missing item, not recipe quantities. Check cooking amounts before shopping.';
+  byId('quantity-rules').textContent = measured
+    ? 'For measured ingredients, the check subtracts pantry stock and the existing list in the exact same unit from the combined recipe need. Only the positive shortfall is added. Other units stay separate; amounts are not converted or scaled. Low staples may have a one-unit floor, shown in the amount details. Every add validates the preview and current state together, atomically. If relevant state changed, nothing is added: review the new amounts and confirm again.'
+    : 'The server adds one unit per missing item, not recipe-serving quantities. A name in another unit stays separate and is shown before confirmation. Every add validates the preview and current household state together, atomically. If relevant state changed, nothing is added: review the updated preview and confirm again.';
+}
 function renderMeals() {
   const target = byId('dinner');
   const open = new Set([...target.querySelectorAll('details[open]')].map((node) => node.dataset.mealKey));
@@ -194,19 +205,36 @@ function renderMeals() {
   const list = element('ul', undefined, 'meal-list');
   for (const meal of meals) {
     const row = element('li', undefined, 'meal-row meal-card');
-    const visual = element('div', undefined, 'meal-art'); visual.append(mealArtwork(meal.meal));
+    const visual = element('div', undefined, 'meal-art');
+    const artwork = Array.isArray(meal.ingredients) ? {
+      'Herb chicken, Brussels sprouts and quinoa-walnut pilaf': '/assets/herb-chicken-brussels-quinoa.svg',
+      'Steak fajita bowls with cilantro-lime cauliflower rice': '/assets/steak-fajita-cauliflower-bowl.svg',
+    }[meal.meal] : undefined;
+    if (artwork) {
+      const image = element('img'); image.src = artwork; image.alt = ''; image.width = 280; image.height = 170;
+      visual.append(image);
+    } else visual.append(mealArtwork(meal.meal));
     const body = element('div', undefined, 'meal-card-body');
     body.append(element('span', meal.day, 'meal-day'), element('strong', meal.meal, 'meal-name'));
     if (Number.isInteger(meal.servings) && meal.servings > 0) body.append(element('p', `${meal.servings} servings planned`, 'meal-servings'));
     const details = element('details', undefined, 'meal-check-details');
     details.dataset.mealKey = JSON.stringify([meal.day, meal.meal]); details.open = open.has(details.dataset.mealKey);
-    const toggle = element('summary', 'Ingredients checked');
-    toggle.setAttribute('aria-label', `Ingredients checked for ${meal.meal}`);
+    const measured = Array.isArray(meal.ingredients);
+    const toggle = element('summary', measured ? 'Ingredients & amounts' : 'Ingredients checked');
+    toggle.setAttribute('aria-label', `${measured ? 'Cooking ingredients' : 'Ingredients checked'} for ${meal.meal}`);
     details.append(toggle);
-    const ingredients = Array.isArray(meal.missingIngredients) ? meal.missingIngredients : [];
+    const ingredients = measured ? meal.ingredients : Array.isArray(meal.missingIngredients) ? meal.missingIngredients : [];
     if (ingredients.length) {
-      const checked = element('ul'); ingredients.forEach((name) => checked.append(element('li', name))); details.append(checked);
-      details.append(element('p', "This checks the listed ingredients only, not a complete recipe. Cooking amounts aren't calculated."));
+      const checked = element('ul', undefined, measured ? 'recipe-ingredients' : undefined);
+      ingredients.forEach((ingredient) => {
+        if (measured) {
+          const line = element('li');
+          line.append(element('span', ingredient.name), element('strong', `${ingredient.quantity} ${ingredient.unit}`, 'recipe-amount'));
+          checked.append(line);
+        } else checked.append(element('li', ingredient));
+      });
+      details.append(checked);
+      details.append(element('p', measured ? `These cooking amounts are for the stored ${meal.servings}-serving recipe. Shopping additions subtract exact-unit pantry stock and existing list quantities. No serving scaling or unit conversion.` : "This checks the listed ingredients only, not a complete recipe. Cooking amounts aren't calculated."));
       body.append(details);
     } else {
       row.classList.add('meal-card--no-checks');
@@ -216,6 +244,7 @@ function renderMeals() {
     list.append(row);
   }
   target.append(list);
+  renderQuantityScope();
   if (focused) {
     const restored = [...target.querySelectorAll('details')].find((node) => node.dataset.mealKey === focused);
     restored?.querySelector('summary').focus({ preventScroll: true });
@@ -285,6 +314,11 @@ async function refreshAfterWrite(resultId) {
   }
 }
 const itemKey = (item) => `${item.name}|${item.unit}`;
+const amountFields = ['quantity', 'requiredQuantity', 'pantryQuantity', 'listedQuantity', 'resultingListQuantity'];
+const hasAnyAmounts = (item) => amountFields.some((key) => Object.hasOwn(item, key));
+const hasAmounts = (item) => amountFields.every((key) => Number.isFinite(item[key]) && item[key] >= 0);
+const addedQuantity = (item) => hasAmounts(item) ? item.quantity : 1;
+const previewItemSnapshot = (item) => ({ name: item.name, unit: item.unit, ...Object.fromEntries(amountFields.filter((key) => Number.isFinite(item[key])).map((key) => [key, item[key]])) });
 const joinNames = (names) => names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 function technicalReceipt(id, result) {
   const details = element('details');
@@ -293,7 +327,7 @@ function technicalReceipt(id, result) {
 }
 // Explain a rejected (stale) confirmation in household terms: which proposed
 // items dropped out or appeared, or that only unrelated list lines changed.
-function describeChange(previousKeys, content) {
+function describeChange(previousKeys, content, previousItems = []) {
   const now = (content.added ?? []).map(itemKey);
   const listed = new Set((content.alreadyListed ?? []).map((item) => item.name));
   const dropped = previousKeys.filter((key) => !now.includes(key)).map((key) => key.split('|')[0]);
@@ -304,20 +338,35 @@ function describeChange(previousKeys, content) {
   if (nowListed.length) parts.push(`${joinNames(nowListed)} ${nowListed.length === 1 ? 'is' : 'are'} now already on the list`);
   if (noLonger.length) parts.push(`${joinNames(noLonger)} ${noLonger.length === 1 ? 'is' : 'are'} no longer needed`);
   if (appeared.length) parts.push(`${joinNames(appeared)} ${appeared.length === 1 ? 'needs' : 'need'} adding now`);
-  return parts.length ? `What changed: ${parts.join('; ')}.` : 'Your proposed items are the same. Something else on the list changed; see the updated list below.';
+  const currentItems = new Map((content.coverage ?? content.added ?? []).map((item) => [itemKey(item), item]));
+  for (const before of previousItems) {
+    const current = currentItems.get(itemKey(before));
+    if (!current || !amountFields.some((key) => current[key] !== before[key])) continue;
+    parts.push(hasAmounts(current) && current.quantity === 0 && hasAmounts(before) && before.quantity === 0
+      ? `${current.name} coverage changed; no addition is needed, but review its amount details`
+      : `${current.name} amounts changed: now add ${addedQuantity(current)} ${current.unit} (previously ${addedQuantity(before)} ${before.unit}); review its amount details`);
+  }
+  return parts.length ? `What changed: ${parts.join('; ')}.` : 'The household state changed. Review the updated amounts and list before confirming.';
 }
 function renderPreview(result, days, changed = false) {
+  state.preview = null;
   const content = changed ? result.structuredContent ?? {} : requireSuccess(result);
   if (content.dryRun !== true) throw new RequestFailure('The server did not identify this response as a dry-run preview. Adding remains disabled.');
   if (typeof content.previewToken !== 'string' || !content.previewToken) throw new RequestFailure('The server did not supply a validated preview. Adding remains disabled.');
   const target = byId('preview'); target.replaceChildren();
   if (changed) target.append(element('p', 'The household changed since your preview. Nothing was added. Review this updated list, then confirm it.', 'changed-notice'));
   const additions = content.added ?? [];
+  if (!Array.isArray(additions) || (content.coverage !== undefined && !Array.isArray(content.coverage))) throw new RequestFailure('The server returned unreadable ingredient amounts. Adding remains disabled.');
+  const measured = content.quantityMode === 'measured' || content.quantityMode === 'mixed';
+  const amountItems = [...additions, ...(content.coverage ?? [])];
+  if (amountItems.some((item) => (hasAnyAmounts(item) || measured) && !hasAmounts(item)) || additions.some((item) => hasAmounts(item) && item.quantity <= 0)) throw new RequestFailure('The server did not supply complete ingredient amounts. Adding remains disabled. Check again before confirming.');
+  renderQuantityScope(content.quantityMode);
   target.append(element('h3', additions.length ? `${additions.length} items to review` : 'Nothing new to add'));
-  if (!additions.length) target.append(element('p', 'The checked ingredients are on hand or already listed. This check does not calculate quantities for servings.'));
+  if (!additions.length) target.append(element('p', measured ? 'The stored recipe amounts are covered by pantry stock and the list in matching units. Nothing new needs adding.' : 'The checked ingredients are on hand or already listed. This check does not calculate quantities for servings.'));
   const groups = new Map();
   for (const item of additions) {
-    const title = item.reason.startsWith('for ')
+    const matching = measured ? state.mealPlan.slice(0, days).filter((meal) => item.reason.toLowerCase().includes(meal.meal.toLowerCase())) : [];
+    const title = matching.length ? 'For the selected meals' : item.reason.startsWith('for ')
       ? `For ${item.reason.slice(4)}` : 'Running low at home';
     if (!groups.has(title)) groups.set(title, []);
     groups.get(title).push(item);
@@ -327,7 +376,10 @@ function renderPreview(result, days, changed = false) {
     const list = element('ul', undefined, 'preview-items');
     for (const item of items) {
       const line = element('li', undefined, 'preview-item');
-      line.append(element('strong', item.name, 'preview-item-name'), element('span', `Add 1 ${item.unit}`, 'preview-item-meta'));
+      const amounts = element('span', undefined, 'preview-item-meta');
+      amounts.append(element('span', `Add ${addedQuantity(item)} ${item.unit}`));
+      if (hasAmounts(item) && item.listedQuantity > 0) amounts.append(element('small', `List becomes ${item.resultingListQuantity} ${item.unit}`, 'resulting-quantity'));
+      line.append(element('strong', item.name, 'preview-item-name'), amounts);
       list.append(line);
     }
     target.append(list);
@@ -335,11 +387,28 @@ function renderPreview(result, days, changed = false) {
   target.append(element('p', `Already listed: ${(content.alreadyListed ?? []).map((item) => `${item.name} (${item.unit})`).join(', ') || 'none'}.`));
   for (const conflict of content.unitConflicts ?? []) {
     const listed = (conflict.listed ?? []).map((line) => `${line.quantity} ${line.unit}`).join(', ');
-    target.append(element('p', `${conflict.name} is already listed as ${listed}; this checklist adds 1 ${conflict.requestedUnit}. Units are not converted.`, 'unit-notice'));
+    const pantry = (conflict.pantry ?? []).map((line) => `${line.quantity} ${line.unit}`).join(', ');
+    const proposed = additions.find((item) => item.name === conflict.name && item.unit === conflict.requestedUnit);
+    target.append(element('p', `${conflict.name}: ${[listed ? `listed as ${listed}` : '', pantry ? `pantry has ${pantry}` : ''].filter(Boolean).join('; ')}. ${proposed ? `This adds ${addedQuantity(proposed)} ${conflict.requestedUnit} separately. ` : ''}Other units do not count toward recipe coverage and are not converted.`, 'unit-notice'));
   }
-  target.append(element('p', additions.length ? 'Nothing has been added yet. Add these items only if the list looks right.' : 'No change is needed from this check.', 'preview-footnote'));
+  if (measured && Array.isArray(content.coverage) && content.coverage.length) {
+    const details = element('details', undefined, 'coverage-details');
+    details.append(element('summary', `Ingredient amounts (${content.coverage.length})`));
+    const list = element('ul', undefined, 'coverage-items');
+    for (const item of content.coverage) {
+      const line = element('li');
+      line.append(element('strong', item.name));
+      line.append(element('p', item.reason, 'coverage-reason'));
+      const need = item.checklistOnly === true ? 'Unmeasured checklist item' : item.requiredQuantity === 0 ? 'Low pantry staple' : `Recipe need ${item.requiredQuantity} ${item.unit}`;
+      line.append(element('p', `${need} · Pantry ${item.pantryQuantity} ${item.unit} · Already on list ${item.listedQuantity} ${item.unit}.`));
+      line.append(element('p', `Add ${item.quantity} ${item.unit}. List after confirmation: ${item.resultingListQuantity} ${item.unit}.${item.lowStockFloor === 1 ? ' A one-unit low-stock floor also applies.' : ''}`));
+      list.append(line);
+    }
+    details.append(list); target.append(details);
+  }
+  target.append(element('p', additions.length ? measured ? 'Nothing has been added.' : 'Nothing has been added yet. Add these items only if the list looks right.' : 'No change is needed from this check.', 'preview-footnote'));
   byId('commit-restock').textContent = changed ? `Confirm ${additions.length} updated item${additions.length === 1 ? '' : 's'}` : `Add ${additions.length} item${additions.length === 1 ? '' : 's'} to your list`;
-  state.preview = { days, token: content.previewToken, count: additions.length, keys: additions.map(itemKey) };
+  state.preview = { days, token: content.previewToken, count: additions.length, quantityMode: content.quantityMode, keys: additions.map(itemKey), items: (content.coverage ?? additions).map(previewItemSnapshot) };
   setStage(additions.length ? 'review' : 'done');
 }
 function renderTopics(preferences) {
@@ -485,14 +554,14 @@ byId('preview-restock').addEventListener('click', () => action('restock-result',
 }, 'Ready to review.', { focus: 'preview' }));
 byId('commit-restock').addEventListener('click', () => {
   if (!state.preview || state.preview.days !== Number(byId('days').value)) return;
-  const { days, token, keys: previousKeys = [] } = state.preview; state.preview = null;
+  const { days, token, keys: previousKeys = [], items: previousItems = [] } = state.preview; state.preview = null;
   action('restock-result', async () => {
     const result = await callTool('restock_for_meals', { days, dry_run: false, expected_token: token }, true);
     const content = result.structuredContent ?? {};
     if (result.isError && content.writeApplied === false && content.dryRun === true && (content.previewChanged || content.previewRequired)) {
       renderPreview(result, days, true);
       const notice = byId('preview').querySelector('.changed-notice');
-      if (notice) notice.after(element('p', describeChange(previousKeys, content), 'change-summary'));
+      if (notice) notice.after(element('p', describeChange(previousKeys, content, previousItems), 'change-summary'));
       showResult('restock-result', result, 'No changes made', 'The list changed. Review the updated preview above and confirm again.');
       // Read-only refresh so the visible list matches the updated review. Never retries the write.
       try { await refreshHousehold(); }

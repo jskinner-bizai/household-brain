@@ -10,7 +10,7 @@ export function createMockModel(): PlannerModel {
       { toolUse: { toolUseId: "mock-pantry", name: "pantry_query", input: {} } },
     ] : turn === 2 ? [
       { toolUse: { toolUseId: "mock-preview", name: "restock_preview", input: {} } },
-    ] : [{ text: "I checked the meal plan and pantry, then requested a dry-run checklist. Review the actual additions below. Only your confirmation changes the sample list. This is a mock model, not an AWS response." }];
+    ] : [{ text: "I checked the meal plan and pantry, then requested a dry-run checklist. Review the actual additions below. Only your confirmation changes the shopping list. This is a mock model, not an AWS response." }];
     return {
       output: { message: { role: "assistant", content } },
       stopReason: turn < 3 ? "tool_use" : "end_turn",

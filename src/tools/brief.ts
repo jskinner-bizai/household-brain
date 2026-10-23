@@ -2,7 +2,7 @@
 // Weather, calendar and home are fictional fixtures. No live sources are connected.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { HouseholdStore, groceryKey, ingredientOnHand, ingredientUnit, norm, normalizedText, SYNTHETIC_DEMO_LABEL } from "../store.js";
+import { HouseholdStore, groceryKey, ingredientOnHand, ingredientUnit, norm, normalizedText, calculateMeasuredRestock, SYNTHETIC_DEMO_LABEL } from "../store.js";
 
 export interface BriefPreferences { detail: "headline" | "standard" | "deep"; topics: string[]; }
 export interface BriefSource { name: string; summarize(pref: BriefPreferences): Promise<string>; }
@@ -38,6 +38,16 @@ export function householdSource(store: HouseholdStore): BriefSource {
       const parts: string[] = [];
       if (tonight) {
         parts.push(`Dinner ${tonight.day} is ${tonight.meal}`);
+        const measured = calculateMeasuredRestock([tonight], pantry, groceries, 1);
+        if (measured) {
+          const cooking = measured.coverage.filter(item => (item.requiredQuantity ?? 0) > 0);
+          const short = cooking.map(item => ({ ...item, shortfall: Math.max(0, Math.round(((item.requiredQuantity ?? 0) - (item.pantryQuantity ?? 0) - (item.listedQuantity ?? 0)) * 1000)) / 1000 })).filter(item => item.shortfall > 0);
+          if (short.length) parts.push(`Still needed for dinner after exact-unit pantry and list coverage: ${short.map(item => `${item.shortfall} ${item.unit} of ${JSON.stringify(item.name)}`).join(", ")}`);
+          else parts.push("Dinner's measured cooking amounts are covered by the pantry and grocery list in the same units; no stock has been consumed or purchased");
+          const onList = cooking.filter(item => (item.listedQuantity ?? 0) > 0);
+          if (onList.length) parts.push(`Already on the grocery list for dinner: ${onList.map(item => `${item.listedQuantity} ${item.unit} of ${JSON.stringify(item.name)}`).join(", ")}`);
+          if (measured.unitConflicts.length) parts.push(`Unit check: ${measured.unitConflicts.map(item => `${JSON.stringify(item.name)} is present in other units that do not cover ${item.requestedUnit}`).join(". ")}. Units are not converted`);
+        } else {
         const missing = [...new Set(tonight.missingIngredients.map(norm))].filter((name) => !ingredientOnHand(name, pantry));
         const onList = missing.filter((name) => groceries.some((line) => groceryKey(line) === groceryKey({ name, unit: ingredientUnit(name, pantry) })));
         const toGet = missing.filter((name) => !onList.includes(name));
@@ -47,6 +57,7 @@ export function householdSource(store: HouseholdStore): BriefSource {
           if (otherUnits.length) parts.push(`Unit check: ${JSON.stringify(name)} is listed as ${otherUnits.map((line) => `${line.quantity} ${JSON.stringify(line.unit)}`).join(" and ")}; restock uses 1 ${JSON.stringify(ingredientUnit(name, pantry))}. Units are not converted`);
         }
         if (onList.length) parts.push(`On the grocery list for dinner: ${onList.join(" and ")}`);
+        }
       }
       if (pref.detail !== "headline") {
         if (lowNotListed.length) parts.push(`Pantry running low, not on the grocery list in the same unit: ${lowNotListed.map((item) => item.name).join(", ")}`);

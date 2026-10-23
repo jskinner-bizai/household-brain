@@ -7,7 +7,7 @@ import {
   HouseholdState, HouseholdStore, MemoryStore, PantryItem, GroceryLine, Chore,
   MealPlanEntry, EnsureGroceriesResult, RestockResult, GROCERY_LINE_LIMIT,
   NAME_LIMIT, UNIT_LIMIT, groceryKey, normalizedQuantity,
-  normalizedText, norm,
+  normalizedText, norm, validatedRecipeIngredients,
 } from "./store.js";
 
 export const FILE_STATE_VERSION = 1;
@@ -54,9 +54,10 @@ function validateState(value: unknown): HouseholdState {
     return { name: text(item.name, NAME_LIMIT, "grocery name"), unit: text(item.unit, UNIT_LIMIT, "grocery unit"), quantity: number(item.quantity, "grocery quantity"), addedBy: text(item.addedBy, NAME_LIMIT, "grocery author") };
   }), groceryKey);
   const meal = array<MealPlanEntry>(state.meal, 7, value => {
-    const item = record(value, ["day", "meal", "servings", "missingIngredients"]);
+    const hasIngredients = !!value && typeof value === "object" && Object.hasOwn(value, "ingredients");
+    const item = record(value, ["day", "meal", "servings", "missingIngredients", ...(hasIngredients ? ["ingredients"] : [])]);
     if (!Number.isInteger(item.servings) || (item.servings as number) < 1 || (item.servings as number) > 1000) throw new Error("Invalid snapshot servings");
-    return { day: text(item.day, UNIT_LIMIT, "meal day"), meal: text(item.meal, 160, "meal name"), servings: item.servings as number, missingIngredients: array(item.missingIngredients, 200, value => text(value, NAME_LIMIT, "ingredient")) };
+    return { day: text(item.day, UNIT_LIMIT, "meal day"), meal: text(item.meal, 160, "meal name"), servings: item.servings as number, missingIngredients: array(item.missingIngredients, 200, value => text(value, NAME_LIMIT, "ingredient")), ...(hasIngredients ? { ingredients: validatedRecipeIngredients(item.ingredients) } : {}) };
   });
   const choreList = unique(array<Chore>(state.choreList, 200, value => {
     const item = record(value, ["name", "assignee", "dueInDays", "done"]);
@@ -144,8 +145,11 @@ export class FileStore implements HouseholdStore {
   ) {
     this.memory = new MemoryStore({ initialState, beforePublish: candidate => this.writeSnapshot(candidate) });
   }
-  static async open(statePath: string): Promise<FileStore> {
+  static async open(statePath: string, initialState?: HouseholdState): Promise<FileStore> {
     if (typeof statePath !== "string" || !statePath.trim() || statePath.length > 1024) throw new Error("A bounded household state path is required");
+    // Detach before the first await. A seed is used only for a missing snapshot;
+    // existing bytes always win and are never replaced by a new fixture.
+    const seed = initialState === undefined ? undefined : structuredClone(initialState);
     const path = resolve(statePath);
     const name = basename(path);
     if (!name || name === "." || name === ".." || /[\x00-\x1f:]/.test(name) || /[. ]$/.test(name)) throw new Error("Invalid household state filename");
@@ -165,7 +169,7 @@ export class FileStore implements HouseholdStore {
       let bytes: Buffer | undefined;
       try { bytes = await readBounded(path, MAX_STATE_FILE_BYTES); }
       catch (error) { if (!isMissing(error)) throw error; }
-      const state = bytes ? decode(bytes) : new MemoryStore().snapshot();
+      const state = bytes ? decode(bytes) : seed === undefined ? new MemoryStore().snapshot() : validateState(seed);
       store = new FileStore(path, lock, token, state, bytes);
       if (!bytes) await store.writeSnapshot(state);
       return store;
